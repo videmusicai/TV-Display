@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-+]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Screens validation helper
+    function isValidScreen(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && (data.location == null || (data.location is string && data.location.size() <= 200))
+        && (data.currentImage == null || (data.currentImage is string && data.currentImage.size() <= 10485760))
+        && (data.lastSync == null || (data.lastSync is string && data.lastSync.size() <= 200))
+        && (data.aspectRatio == null || (data.aspectRatio is string && data.aspectRatio.size() <= 20))
+        && (data.status == null || (data.status is string && data.status.size() <= 20));
+    }
+
+    // Products validation helper
+    function isValidProduct(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.price is number && data.price >= 0
+        && (data.category == null || (data.category is string && data.category.size() <= 100))
+        && (data.available == null || data.available is bool);
+    }
+
+    // Screens collection
+    match /screens/{screenId} {
+      allow get, list: if true;
+      allow create: if isValidId(screenId) && isValidScreen(incoming());
+      allow update: if isValidId(screenId) && isValidScreen(incoming());
+      allow delete: if true;
+    }
+
+    // Products collection
+    match /products/{productId} {
+      allow get, list: if true;
+      allow create: if isValidId(productId) && isValidProduct(incoming());
+      allow update: if isValidId(productId) && isValidProduct(incoming());
+      allow delete: if true;
+    }
+  }
+}

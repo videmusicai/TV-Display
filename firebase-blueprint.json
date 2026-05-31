@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "Screen": {
+      "title": "Screen",
+      "description": "Represents a physical TV screen display configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "currentImage": { "type": "string" },
+        "lastSync": { "type": "string" },
+        "aspectRatio": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Bakery menu items and prices in the system",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "available": { "type": "boolean" }
+      },
+      "required": ["id", "name", "price"]
+    }
+  },
+  "firestore": {
+    "screens/{screenId}": {
+      "schema": "Screen",
+      "description": "Collection of screens and their active media assets"
+    },
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of products for pricing catalog"
+    }
+  }
+}
