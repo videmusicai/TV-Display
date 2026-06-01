@@ -21,7 +21,8 @@ import {
   ChevronDown, 
   BookOpen, 
   Info, 
-  AlertCircle 
+  AlertCircle,
+  Megaphone
 } from "lucide-react";
 import { 
   collection, 
@@ -262,6 +263,19 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
         </div>
       )}
 
+      {/* 3. LOGOMARCA OFICIAL FLUTUANTE (BRANDEADO DO VITRION DIGITAL DISPLAY) */}
+      <div className="absolute left-8 top-8 z-50 flex items-center gap-2.5 bg-slate-950/85 backdrop-blur-md border border-white/10 px-4 py-2.5 rounded-2xl shadow-2xl animate-fade-in select-none">
+        <VitrionLogo className="w-8 h-8" />
+        <div className="flex flex-col">
+          <span className="text-xs font-black uppercase tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400 font-sans leading-none">
+            Vitrion
+          </span>
+          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 leading-none">
+            Digital Display
+          </span>
+        </div>
+      </div>
+
       {/* Identificador Sutil de Tela Cheia no Canto */}
       <div className="absolute left-6 bottom-6 text-[10px] font-mono text-white/20 bg-black/40 px-2 py-1 rounded">
         Vitrion Digital Display Screen: {screen?.id} • {screen?.name}
@@ -272,18 +286,246 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
 }
 
 // ==========================================
+// PRESETS DE PROMOÇÕES E AVISOS PROFISSIONAIS COMPILADOS EM SVG
+// ==========================================
+const PROMPT_PROMO_PRESETS_RAW = [
+  {
+    id: "promo-combo",
+    title: "Combo: CAFÉ EXPRESSO + COPO DE PÃO DE QUEIJO",
+    subtitle: "Oferta imperdível do balcão",
+    category: "Combo Sabor",
+    svgMarkup: `<svg viewBox="0 0 1024 576" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="grad-combo" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#0f172a;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#1e293b;stop-opacity:1" />
+        </linearGradient>
+      </defs>
+      <rect width="1024" height="576" fill="url(#grad-combo)" />
+      <rect x="25" y="25" width="974" height="526" fill="none" stroke="#f59e0b" stroke-width="4" rx="15" opacity="0.8" />
+      <rect x="35" y="35" width="954" height="506" fill="none" stroke="#e2e8f0" stroke-width="1.5" rx="10" opacity="0.15" />
+      
+      <!-- Detalhe visual esquerdo -->
+      <path d="M 0 0 L 150 0 L 0 400" fill="#f59e0b" opacity="0.2" />
+      <path d="M 1024 576 L 874 576 L 1024 176" fill="#f59e0b" opacity="0.1" />
+
+      <!-- Textos principais -->
+      <text x="512" y="110" text-anchor="middle" fill="#f59e0b" font-family="'Georgia', serif" font-size="24" font-weight="bold" letter-spacing="4">OFERTA IMPERDÍVEL HOJE</text>
+      <text x="512" y="190" text-anchor="middle" fill="#ffffff" font-family="sans-serif" font-size="52" font-weight="900" letter-spacing="1">COMBO CAFÉ E PÃO DE QUEIJO</text>
+      <text x="512" y="240" text-anchor="middle" fill="#94a3b8" font-family="'Courier New', monospace" font-size="14" font-weight="bold" letter-spacing="4">O CLÁSSICO PERFEITO PARA COMEÇAR O SEU DIA</text>
+
+      <!-- Preço gigante em destaque circular ou badge -->
+      <rect x="362" y="280" width="300" height="120" rx="20" fill="#f59e0b" />
+      <text x="512" y="332" text-anchor="middle" fill="#0f172a" font-family="sans-serif" font-size="34" font-weight="950">Apenas</text>
+      <text x="512" y="378" text-anchor="middle" fill="#0f172a" font-family="sans-serif" font-size="36" font-weight="900">R$ 14,90</text>
+
+      <text x="512" y="475" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="12" font-weight="600" letter-spacing="1">Disponível em todos os balcões • Imagem meramente ilustrativa</text>
+    </svg>`
+  },
+  {
+    id: "promo-pix",
+    title: "Chave PIX e QR Code para Pagar",
+    subtitle: "Aviso de facilidade para o balcão",
+    category: "Finanças / Checkout",
+    svgMarkup: `<svg viewBox="0 0 1024 576" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="grad-pix" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#015a5a;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#083333;stop-opacity:1" />
+        </linearGradient>
+      </defs>
+      <rect width="1024" height="576" fill="url(#grad-pix)" />
+      <rect x="30" y="30" width="964" height="516" fill="none" stroke="#2dd4bf" stroke-width="3" rx="12" opacity="0.6" />
+
+      <!-- Símbolo Pix no background sutil -->
+      <path d="M 50 150 L 150 50 L 250 150 L 150 250 Z" fill="none" stroke="#2dd4bf" stroke-width="4" opacity="0.1" />
+
+      <!-- Coluna da Esquerda: Textos ilustrativos -->
+      <g transform="translate(100, 0)">
+        <text x="0" y="130" fill="#2dd4bf" font-family="sans-serif" font-size="20" font-weight="bold" letter-spacing="4">PAGAMENTO INSTANTÂNEO</text>
+        <text x="0" y="210" fill="#ffffff" font-family="sans-serif" font-size="54" font-weight="950" letter-spacing="1">ACEITAMOS PIX</text>
+        
+        <text x="0" y="280" fill="#e2e8f0" font-family="sans-serif" font-size="18" font-weight="bold">CHAVE CNPJ DA PADARIA:</text>
+        <rect x="0" y="305" width="450" height="55" rx="8" fill="#082b2b" stroke="#2dd4bf" stroke-width="1.5" />
+        <text x="20" y="338" fill="#2dd4bf" font-family="monospace" font-size="18" font-weight="900">12.345.678/0001-99</text>
+        
+        <text x="0" y="395" fill="#94a3b8" font-family="sans-serif" font-size="14" font-weight="600">Confirme o favorecedor: Vitrion Padaria &amp; Confeitaria Ltda</text>
+        <text x="0" y="460" fill="#ffffff" font-family="sans-serif" font-size="14" font-weight="bold">Evite filas! Pague por PIX e retire no balcão de entregas.</text>
+      </g>
+
+      <!-- Coluna da Direita: Mock QR Code -->
+      <g transform="translate(680, 110)">
+        <rect x="0" y="0" width="220" height="220" rx="10" fill="#ffffff" stroke="#2dd4bf" stroke-width="4" />
+        <!-- Grade preta representando o QR Code sutil -->
+        <rect x="25" y="25" width="50" height="50" fill="#083333" />
+        <rect x="145" y="25" width="50" height="50" fill="#083333" />
+        <rect x="25" y="145" width="50" height="50" fill="#083333" />
+        <!-- Padrão mock -->
+        <rect x="90" y="90" width="40" height="40" fill="#083333" />
+        <rect x="50" y="100" width="20" height="20" fill="#083333" />
+        <rect x="100" y="50" width="20" height="20" fill="#083333" />
+        <rect x="150" y="100" width="30" height="30" fill="#083333" />
+        <rect x="100" y="145" width="30" height="30" fill="#083333" />
+        <!-- Legenda QR code -->
+        <text x="110" y="270" text-anchor="middle" fill="#2dd4bf" font-family="sans-serif" font-size="15" font-weight="900" letter-spacing="1">ESCANEAR PARA PAGAR</text>
+      </g>
+    </svg>`
+  },
+  {
+    id: "promo-fresh-bread",
+    title: "Festival Sazonal: PÃO QUENTINHO NA MESA",
+    subtitle: "Informativo rústico de fornada fresca",
+    category: "Aviso de Fornada",
+    svgMarkup: `<svg viewBox="0 0 1024 576" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="grad-bread" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#451a03;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#1c1917;stop-opacity:1" />
+        </linearGradient>
+      </defs>
+      <rect width="1024" height="576" fill="url(#grad-bread)" />
+      <rect x="25" y="25" width="974" height="526" fill="none" stroke="#f97316" stroke-width="4" opacity="0.6" />
+      
+      <!-- Detalhes no topo -->
+      <line x1="300" y1="65" x2="724" y2="65" stroke="#f97316" stroke-width="2" opacity="0.5" />
+      <circle cx="512" cy="65" r="5" fill="#f97316" />
+
+      <!-- Textos principais -->
+      <text x="512" y="130" text-anchor="middle" fill="#f97316" font-family="'Georgia', serif" font-size="30" font-style="italic" font-weight="bold">Fornada Rústica</text>
+      <text x="512" y="210" text-anchor="middle" fill="#ffffff" font-family="sans-serif" font-size="56" font-weight="950" letter-spacing="2">PÃO INTEGRAL &amp; ITALIANO</text>
+      <text x="512" y="260" text-anchor="middle" fill="#fdba74" font-family="sans-serif" font-size="16" font-weight="700" letter-spacing="4">SAINDO TODOS OS DIAS • 16:30 hrs</text>
+
+      <!-- Divisória decorada -->
+      <line x1="250" y1="310" x2="774" y2="310" stroke="#f97316" stroke-width="1.5" opacity="0.3" />
+
+      <!-- Tabela sutil de horários -->
+      <g transform="translate(200, 340)">
+        <text x="0" y="30" fill="#fdba74" font-family="sans-serif" font-size="14" font-weight="bold">SEGUNDA A SEXTA</text>
+        <text x="0" y="65" fill="#ffffff" font-family="monospace" font-size="24" font-weight="bold">07:0 | 12:0 | 16:30 | 19:0</text>
+        
+        <text x="400" y="30" fill="#fdba74" font-family="sans-serif" font-size="14" font-weight="bold">SÁBADOS E FERIADOS</text>
+        <text x="400" y="65" fill="#ffffff" font-family="monospace" font-size="24" font-weight="bold">07:30 | 11:30 | 17:00</text>
+      </g>
+
+      <text x="512" y="495" text-anchor="middle" fill="#a8a29e" font-family="sans-serif" font-size="12" font-style="italic">Feito com fermentação 100% natural, crocância pura por fora e maciez por dentro</text>
+    </svg>`
+  }
+];
+
+const PROMPT_PROMO_PRESETS = PROMPT_PROMO_PRESETS_RAW.map(item => ({
+  ...item,
+  dataUrl: `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(item.svgMarkup)))}`,
+  previewSvg: item.svgMarkup
+}));
+
+// ==========================================
 // VIEW 2: PAINEL ADMINISTRATIVO (DASHBOARD)
 // ==========================================
 function AdminDashboardView() {
-  const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "how-to">("screens");
+  const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "promotions" | "how-to">("screens");
   const [screens, setScreens] = useState<ScreenData[]>([]);
   const [products, setProducts] = useState<ProductData[]>([]);
   const [user, setUser] = useState<any>(null);
+
+  // Estados para Promoções Customizadas e Envios Manuais
+  const [promoFileBase64, setPromoFileBase64] = useState<string | null>(null);
+  const [promoFileName, setPromoFileName] = useState<string>("");
+  const [selectedPromoScreens, setSelectedPromoScreens] = useState<string[]>([]);
+
+  // Função para processamento e compressão inteligente de imagens via canvas para ficar leve no Firestore
+  const handlePromoFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 12 * 1024 * 1024) {
+      showToast("A imagem excedeu o limite máximo recomendado de 12MB.", "error");
+      return;
+    }
+
+    setPromoFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1280; // Resolução ideal horizontal sem sobrecarregar o Firestore
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL("image/jpeg", 0.85); // Compressão equilibrada
+          setPromoFileBase64(compressed);
+          showToast("A imagem promocional foi processada e comprimida com sucesso!", "success");
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePublishPromotion = async () => {
+    if (!promoFileBase64) {
+      showToast("Por favor, selecione ou envie uma imagem promocional primeiro.", "info");
+      return;
+    }
+    if (selectedPromoScreens.length === 0) {
+      showToast("Selecione pelo menos uma TV para receber esta promoção.", "info");
+      return;
+    }
+
+    try {
+      showToast("Publicando promoção nas TVs conectadas...", "info");
+      const promises = selectedPromoScreens.map((scId) => 
+        updateDoc(doc(db, "screens", scId), {
+          currentImage: promoFileBase64,
+          lastSync: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+        })
+      );
+      await Promise.all(promises);
+      showToast(`Sucesso! Promoção transmitida em tempo real para ${selectedPromoScreens.length} TV(s)!`, "success");
+      setPromoFileBase64(null);
+      setPromoFileName("");
+      setSelectedPromoScreens([]);
+    } catch (err: unknown) {
+      console.error("Erro ao sintonizar promoção:", err);
+      showToast("Erro ao sintonizar promoção nas TVs selecionadas.", "error");
+    }
+  };
   
   // Estados para modais de edição
   const [editingScreen, setEditingScreen] = useState<ScreenData | null>(null);
   const [editingProduct, setEditingProduct] = useState<ProductData | null>(null);
   const [isDeletingScreen, setIsDeletingScreen] = useState<string | null>(null);
+
+  // Estado para Toast / Mensagens de Sucesso e Erro (Evitando alert e confirm do Navegador)
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+
+  const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
+    setToast({ message, type });
+  };
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => {
+        setToast(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
 
   // Estados com formulários
   const [newProdName, setNewProdName] = useState("");
@@ -395,9 +637,10 @@ function AdminDashboardView() {
       }
 
       await batch.commit();
-      alert("Sucesso! O sistema foi redefinido e povoado com 7 TVs prontas e um cardápio teste de padaria rústica.");
+      showToast("O sistema foi redefinido e povoado com 7 TVs prontas e um cardápio de padaria rústica!", "success");
     } catch (err: unknown) {
-      handleFirestoreError(err, OperationType.WRITE, "populate-initial");
+      console.error("Erro ao inicializar:", err);
+      showToast(`Erro ao redefinir base: ${err instanceof Error ? err.message : String(err)}`, "error");
     }
   };
 
@@ -484,28 +727,55 @@ function AdminDashboardView() {
     }
   };
 
-  // 6. TRATAMENTO SENSACIONAL DE ARQUIVO PARA BASE64 (UP-LOAD DAS IMAGENS DA IA)
+  // 6. TRATAMENTO SENSACIONAL DE ARQUIVO PARA BASE64 COM COMPRESSÃO INTELIGENTE
   const handleUploadImageFile = (e: ChangeEvent<HTMLInputElement>, screenId: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 8 * 1024 * 1024) {
-      alert("A imagem selecionada excede o limite recomendado para desempenho (máx: 8MB). Reduza as dimensões da imagem exportada pela Inteligência Artificial.");
+    if (file.size > 12 * 1024 * 1024) {
+      showToast("Erro: A imagem excede o limite máximo para upload (máx: 12MB).", "error");
       return;
     }
 
     const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64String = reader.result as string;
-      try {
-        await updateDoc(doc(db, "screens", screenId), {
-          currentImage: base64String,
-          lastSync: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
-        });
-        alert(`Sucesso! A nova arte de menu gerada por IA foi sincronizada com a TV: ${screenId}`);
-      } catch (err: unknown) {
-        handleFirestoreError(err, OperationType.WRITE, `screens/${screenId}`);
-      }
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1280; // Resolução ideal para TV sem pesar no Firestore
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
+          
+          try {
+            await updateDoc(doc(db, "screens", screenId), {
+              currentImage: compressedBase64,
+              lastSync: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+            });
+            showToast(`A nova imagem/promoção foi enviada e sincronizada com a TV: ${screenId}!`, "success");
+          } catch (err: unknown) {
+            console.error("Erro ao fazer upload da imagem:", err);
+            showToast("Erro ao salvar imagem na TV. Verifique os limites do Firestore.", "error");
+          }
+        }
+      };
+      img.src = event.target?.result as string;
     };
     reader.readAsDataURL(file);
   };
@@ -577,6 +847,15 @@ function AdminDashboardView() {
           </button>
 
           <button 
+            onClick={() => setActiveTab("promotions")}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "promotions" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
+            id="tab-promotions"
+          >
+            <Megaphone className="w-4 h-4 text-emerald-400" />
+            Promoções Customizadas
+          </button>
+
+          <button 
             onClick={() => setActiveTab("assets")}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "assets" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
             id="tab-assets"
@@ -624,6 +903,7 @@ function AdminDashboardView() {
             <h2 className="font-semibold text-base text-slate-900 uppercase tracking-wide">
               {activeTab === "screens" && "Gerenciar TVs Digitais"}
               {activeTab === "products" && "Mapeamento de Preços & Produtos"}
+              {activeTab === "promotions" && "Promoções Customizadas & Envio Manual"}
               {activeTab === "assets" && "Biblioteca de Imagens de Inteligência Artificial"}
               {activeTab === "how-to" && "Como Conectar o Amazon Fire TV"}
             </h2>
@@ -735,7 +1015,7 @@ function AdminDashboardView() {
                               <div className="flex justify-between text-[10px]">
                                 <span className="text-slate-500">Mídia Ativa:</span>
                                 <span className="font-semibold text-slate-700 truncate max-w-[120px]">
-                                  {presetImg ? presetImg.name : isCustomUploaded ? "Imagem IA Carregada" : "Padrão"}
+                                  {presetImg ? presetImg.name : isCustomUploaded ? "Imagem/Promoção Customizada" : "Padrão"}
                                 </span>
                               </div>
                             </div>
@@ -748,7 +1028,7 @@ function AdminDashboardView() {
                               <button 
                                 onClick={() => {
                                   navigator.clipboard.writeText(displayUrl);
-                                  alert("Link copiado! Cole este endereço exclusivo no navegador do seu Fire TV para exibir esta tela.");
+                                  showToast("URL do display copiado com sucesso!", "success");
                                 }}
                                 className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[9px] font-bold uppercase tracking-wider"
                                 title="Copiar link exclusivo da TV"
@@ -778,10 +1058,10 @@ function AdminDashboardView() {
                               </button>
                               <button 
                                 onClick={() => triggerFileUpload(sc.id)}
-                                className="py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold text-[9px] rounded uppercase tracking-wider flex items-center gap-1"
-                                title="Carregar nova imagem de inteligência artificial"
+                                className="py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-emerald-400 font-bold text-[9px] rounded uppercase tracking-wider flex items-center gap-1"
+                                title="Enviar imagem manual, banner do Canva ou promoção customizada para esta TV"
                               >
-                                <Upload className="w-3 h-3" /> Subir IA Image
+                                <Upload className="w-3 h-3" /> Subir Imagem / Promoção
                               </button>
                             </div>
 
@@ -1084,6 +1364,204 @@ function AdminDashboardView() {
             </div>
           )}
 
+          {/* TAB: PROMOÇÕES CUSTOMIZADAS E ENVIOS MANUAIS */}
+          {activeTab === "promotions" && (
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+              
+              {/* Esquerda: Painel de Envio de Mídia (7 colunas no desktop) */}
+              <div className="xl:col-span-7 space-y-6">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-5">
+                    <Upload className="w-5 h-5 text-emerald-600" />
+                    <div>
+                      <h3 className="font-bold text-xs uppercase text-slate-800 tracking-wider">Sintonizar Nova Promoção / Imagem Manual</h3>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest leading-none">Suba qualquer cartaz, papel de parede ou arte do Canva</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-5">
+                    {/* Área de Seleção de Arquivo */}
+                    <div>
+                      <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-2">1. Selecione ou Arraste o arquivo de imagem (16:9 ideal)</label>
+                      <div 
+                        onClick={() => document.getElementById("promo-upload-input")?.click()}
+                        className="border-2 border-dashed border-slate-200 hover:border-emerald-500 rounded-xl p-8 flex flex-col items-center justify-center bg-slate-50 hover:bg-slate-50/55 cursor-pointer transition-all group"
+                      >
+                        <input 
+                          type="file" 
+                          id="promo-upload-input" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={handlePromoFileSelect} 
+                        />
+                        {promoFileBase64 ? (
+                          <div className="w-full relative">
+                            <img src={promoFileBase64} alt="Preview da Promoção" className="h-40 w-full object-contain rounded bg-slate-900 border border-slate-200" />
+                            <div className="absolute top-2 right-2 bg-slate-900/80 text-white text-[10px] px-2 py-0.5 rounded font-mono truncate max-w-[200px]">
+                              {promoFileName || "Imagem Carregada"}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center group overflow-hidden">
+                            <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3 transition-transform group-hover:scale-110">
+                              <Upload className="w-6 h-6" />
+                            </div>
+                            <h4 className="font-bold text-xs text-slate-700 tracking-wide">Clique para selecionar imagem</h4>
+                            <p className="text-[10px] text-slate-400 mt-1 max-w-xs uppercase tracking-wider text-center leading-relaxed">Suporta JPG, PNG ou GIF. Redimensionada automaticamente para excelente resolução sem sobrecarregar a TV.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Selecionar TVs de Destino */}
+                    <div>
+                      <div className="flex justify-between items-center mb-2.5">
+                        <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">2. Selecione as TVs de Destino da Promoção</label>
+                        <div className="flex gap-2 text-[10px] font-bold">
+                          <button 
+                            type="button" 
+                            onClick={() => setSelectedPromoScreens(screens.map(s => s.id))}
+                            className="text-blue-600 hover:underline uppercase tracking-wider"
+                          >
+                            Marcar Todas
+                          </button>
+                          <span className="text-slate-300">|</span>
+                          <button 
+                            type="button" 
+                            onClick={() => setSelectedPromoScreens([])}
+                            className="text-slate-500 hover:underline uppercase tracking-wider"
+                          >
+                            Desmarcar
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[190px] overflow-y-auto pr-1">
+                        {screens.map((sc, index) => {
+                          const isChecked = selectedPromoScreens.includes(sc.id);
+                          return (
+                            <label 
+                              key={sc.id} 
+                              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer select-none transition-all ${isChecked ? "bg-emerald-500/10 border-emerald-500/30 text-slate-900" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                            >
+                              <input 
+                                type="checkbox" 
+                                checked={isChecked}
+                                onChange={() => {
+                                  if (isChecked) {
+                                    setSelectedPromoScreens(selectedPromoScreens.filter(id => id !== sc.id));
+                                  } else {
+                                    setSelectedPromoScreens([...selectedPromoScreens, sc.id]);
+                                  }
+                                }}
+                                className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 border-slate-300"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <h5 className="font-bold text-[11px] uppercase tracking-wide truncate">#0{index + 1} {sc.name}</h5>
+                                <p className="text-[9px] text-slate-400 uppercase tracking-widest truncate">{sc.location || "Área Principal"}</p>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Botão de Disparo */}
+                    <div className="pt-3 border-t border-slate-100 flex justify-end gap-3.5">
+                      {promoFileBase64 && (
+                        <button 
+                          onClick={() => {
+                            setPromoFileBase64(null);
+                            setPromoFileName("");
+                          }}
+                          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg uppercase tracking-wider transition-all"
+                        >
+                          Limpar Imagem
+                        </button>
+                      )}
+                      
+                      <button 
+                        onClick={handlePublishPromotion}
+                        disabled={!promoFileBase64 || selectedPromoScreens.length === 0}
+                        className={`px-5 py-2.5 font-bold rounded-lg text-xs uppercase tracking-wider flex items-center gap-2 shadow-sm transition-all ${(!promoFileBase64 || selectedPromoScreens.length === 0) ? "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+                      >
+                        <Megaphone className="w-4 h-4" /> Publicar Promoção Agora
+                      </button>
+                    </div>
+
+                  </div>
+                </div>
+
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 leading-relaxed flex items-start gap-3">
+                  <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h5 className="font-bold mb-1">Dica de Gestor de Sucesso</h5>
+                    <p>
+                      Mídias criadas com ferramentas externas (como o <strong>Canva</strong>) têm uma taxa de visualização fantástica! Ao preparar banners para a TV da sua padaria ou confeitaria, prefira salvar na resolução ideal de <strong>1920x1080 (Proporção 16:9 de TVs)</strong> para preencher toda a tela e garantir legibilidade máxima.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Direita: Promoções Oficiais Prontas e Campanhas Rápidas */}
+              <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-4">
+                    <Sparkles className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <h3 className="font-bold text-xs uppercase text-slate-800 tracking-wider">Campanhas e Templates de Envio Rápido</h3>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest leading-none">Selecione e transmita cartazes profissionais instantâneos</p>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+                    Precisa colocar uma informação com velocidade na TV? Selecione um dos modelos desenhados sob medida abaixo para transmitir com facilidade nas TVs que você marcou:
+                  </p>
+
+                  <div className="space-y-4">
+                    {PROMPT_PROMO_PRESETS.map((pPreset) => (
+                      <div 
+                        key={pPreset.id} 
+                        className="group border border-slate-200 hover:border-blue-300 rounded-xl overflow-hidden bg-slate-50 flex items-center hover:shadow transition-all p-3 gap-4"
+                      >
+                        <div className="w-20 h-14 bg-slate-900 shrink-0 rounded overflow-hidden flex items-center justify-center p-0.5 shadow-sm border border-slate-200">
+                          {pPreset.previewSvg ? (
+                            <div className="w-full h-full scale-[0.6] opacity-90 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: pPreset.previewSvg }} />
+                          ) : (
+                            <div className="text-[8px] text-slate-600 font-mono">Template</div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[8px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold uppercase tracking-wider">{pPreset.category}</span>
+                          <h4 className="font-bold text-[11px] text-slate-800 mt-1 truncate">{pPreset.title}</h4>
+                          <p className="text-[9px] text-slate-400 uppercase tracking-widest leading-none mt-0.5">{pPreset.subtitle}</p>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            setPromoFileBase64(pPreset.dataUrl);
+                            setPromoFileName(pPreset.title);
+                            showToast(`Template "${pPreset.title}" carregado para sintonização rápida!`, "success");
+                          }}
+                          className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[9px] rounded uppercase tracking-wider shrink-0 transition-all shadow-sm"
+                        >
+                          Usar Arte
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-6 pt-4 border-t border-slate-100">
+                  <p className="text-[10px] text-slate-400 leading-relaxed text-center font-mono">
+                    Sincronologia Vitrion Digital Display™ • Atendimento Instantâneo
+                  </p>
+                </div>
+              </div>
+
+            </div>
+          )}
+
           {/* TAB 4: PASSO A PASSO COMO CONECTAR NO AMAZON FIRE TV */}
           {activeTab === "how-to" && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-md p-6 max-w-4xl mx-auto space-y-6">
@@ -1141,7 +1619,7 @@ function AdminDashboardView() {
                           <button 
                             onClick={() => {
                               navigator.clipboard.writeText(displayUrl);
-                              alert("URL exclusivo da TV copiado!");
+                              showToast("URL exclusivo da TV copiado para a área de transferência!", "success");
                             }}
                             className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold px-2 py-1 text-[10px] rounded uppercase select-none flex items-center gap-1"
                           >
@@ -1304,6 +1782,28 @@ function AdminDashboardView() {
               <button onClick={handleDeleteScreen} className="px-3.5 py-1.5 bg-red-600 font-bold text-xs text-white rounded-lg">Confirmar Remoção</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* TOAST DE NOTIFICAÇÕES FLUTUANTE EXCLUSIVO */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-[100] max-w-sm w-full bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-4 text-white flex items-start gap-3 animate-fade-in animate-duration-300">
+          <div className={`mt-0.5 p-1 rounded-full ${toast.type === "success" ? "bg-emerald-500/10 text-emerald-400" : toast.type === "error" ? "bg-red-500/10 text-red-400" : "bg-blue-500/10 text-blue-400"}`}>
+            {toast.type === "success" ? (
+              <Check className="w-4 h-4" />
+            ) : toast.type === "error" ? (
+              <AlertCircle className="w-4 h-4" />
+            ) : (
+              <Info className="w-4 h-4" />
+            )}
+          </div>
+          <div className="flex-1">
+            <h5 className="font-bold text-xs uppercase tracking-wider">{toast.type === "success" ? "Sucesso" : toast.type === "error" ? "Erro" : "Aviso"}</h5>
+            <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">{toast.message}</p>
+          </div>
+          <button onClick={() => setToast(null)} className="text-slate-500 hover:text-white transition-colors shrink-0">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
