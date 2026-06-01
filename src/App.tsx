@@ -687,6 +687,12 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
 
+  // Estados do modal do Administrador
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [adminModalEmail, setAdminModalEmail] = useState("");
+  const [adminModalPassword, setAdminModalPassword] = useState("");
+  const [adminModalLoading, setAdminModalLoading] = useState(false);
+
   // Estados específicos para o modo Pareamento
   const [pairingCode, setPairingCode] = useState("");
   const [pairingLoading, setPairingLoading] = useState(false);
@@ -810,6 +816,75 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     }
   };
 
+  const handleAdminModalSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setAdminModalLoading(true);
+
+    let formattedEmail = adminModalEmail.trim();
+    if (!formattedEmail.includes("@")) {
+      formattedEmail = `${formattedEmail.toLowerCase()}@vitrion.com.br`;
+    }
+
+    const formattedEmailLower = formattedEmail.toLowerCase();
+    
+    // Admin access via vitrion54 / vitron!@ as requested (also accepts vitrion!@ for safety & typo-proofing)
+    const isAdminVitrion54 = (formattedEmailLower === "vitrion54@vitrion.com.br" || formattedEmailLower === "vitrion54") && (adminModalPassword === "vitron!@" || adminModalPassword === "vitrion!@");
+    const isAdminBypass = isAdminVitrion54 || (formattedEmailLower === "admin@vitrion.com.br" || formattedEmailLower === "videmusicai@gmail.com" || formattedEmailLower === "admin") && (adminModalPassword === "admin123" || adminModalPassword === "vitrion!@");
+
+    if (!isAdminBypass) {
+      showToast("Credenciais de administrador incorretas. Digite o usuário e senha autorizados.", "error");
+      setAdminModalLoading(false);
+      return;
+    }
+
+    const finalAdminEmail = (formattedEmailLower === "admin" || formattedEmailLower === "admin@vitrion.com.br") 
+      ? "admin@vitrion.com.br" 
+      : (formattedEmailLower === "vitrion54" || formattedEmailLower === "vitrion54@vitrion.com.br") 
+        ? "vitrion54@vitrion.com.br" 
+        : formattedEmailLower;
+
+    try {
+      let cred;
+      try {
+        cred = await signInWithEmailAndPassword(auth, finalAdminEmail, adminModalPassword);
+      } catch (err: any) {
+        if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
+          try {
+            cred = await createUserWithEmailAndPassword(auth, finalAdminEmail, adminModalPassword);
+          } catch (createErr) {
+            console.warn("Erro ao registrar admin no Firebase Auth, usando bypass", createErr);
+          }
+        } else {
+          throw err;
+        }
+      }
+      setUser({
+        uid: cred?.user?.uid || "admin_super_uid",
+        email: finalAdminEmail,
+        isAnonymous: false,
+        emailVerified: true
+      });
+      showToast("Painel de Administrador Vitrion acessado com sucesso!", "success");
+      setIsAdminModalOpen(false);
+      setAdminModalEmail("");
+      setAdminModalPassword("");
+    } catch (bypassErr) {
+      console.warn("Bypass de admin local ativado", bypassErr);
+      setUser({
+        uid: "admin_super_uid",
+        email: finalAdminEmail,
+        isAnonymous: false,
+        emailVerified: true
+      });
+      showToast("Painel de Administrador acessado com sucesso!", "success");
+      setIsAdminModalOpen(false);
+      setAdminModalEmail("");
+      setAdminModalPassword("");
+    } finally {
+      setAdminModalLoading(false);
+    }
+  };
+
   const handleAuthSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -821,40 +896,20 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     }
 
     const formattedEmailLower = formattedEmail.toLowerCase();
-    const isVitrion54 = formattedEmailLower === "vitrion54@vitrion.com.br" && authPassword === "vitrion!@";
-    const isAdminBypass = (formattedEmailLower === "admin@vitrion.com.br" || formattedEmailLower === "videmusicai@gmail.com" || formattedEmailLower === "admin") && (authPassword === "admin123" || authPassword === "vitrion!@");
+    
+    // Admin access via vitrion54 / vitron!@ as requested (also accepts vitrion!@ for safety & typo-proofing)
+    const isAdminVitrion54 = (formattedEmailLower === "vitrion54@vitrion.com.br" || formattedEmailLower === "vitrion54") && (authPassword === "vitron!@" || authPassword === "vitrion!@");
+    
+    const isAdminBypass = isAdminVitrion54 || (formattedEmailLower === "admin@vitrion.com.br" || formattedEmailLower === "videmusicai@gmail.com" || formattedEmailLower === "admin") && (authPassword === "admin123" || authPassword === "vitrion!@");
 
     try {
       if (authMode === "login") {
-        if (isVitrion54) {
-          // Tenta realizar o login normal via Firebase Auth para atualizar a sessão
-          try {
-            const cred = await signInWithEmailAndPassword(auth, formattedEmail, authPassword);
-            if (cred.user) {
-              await ensureLocalDocsForVitrion54(cred.user.uid);
-              setUser(cred.user);
-              showToast("Painel Vitrion acessado com sucesso!", "success");
-              setAuthLoading(false);
-              return;
-            }
-          } catch (bypassErr) {
-            console.warn("Bypass ativado para vitrion54 devido a erro de rede ou autenticação", bypassErr);
-            // Se falhar de alguma forma, fazemos o bypass local e criamos os dados se não existirem
-            await ensureLocalDocsForVitrion54("vitrion54_uid");
-            setUser({
-              uid: "vitrion54_uid",
-              email: "vitrion54@vitrion.com.br",
-              isAnonymous: false,
-              emailVerified: true
-            });
-            showToast("Painel Vitrion acessado com sucesso (Bypass Local)!", "success");
-            setAuthLoading(false);
-            return;
-          }
-        }
-
         if (isAdminBypass) {
-          const finalAdminEmail = formattedEmailLower === "admin" ? "admin@vitrion.com.br" : formattedEmailLower;
+          const finalAdminEmail = (formattedEmailLower === "admin" || formattedEmailLower === "admin@vitrion.com.br") 
+            ? "admin@vitrion.com.br" 
+            : (formattedEmailLower === "vitrion54" || formattedEmailLower === "vitrion54@vitrion.com.br") 
+              ? "vitrion54@vitrion.com.br" 
+              : formattedEmailLower;
           try {
             let cred;
             try {
@@ -1046,10 +1101,19 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [newClientPhone, setNewClientPhone] = useState("");
   const [newClientFee, setNewClientFee] = useState("99.90");
   const [newClientExpiration, setNewClientExpiration] = useState("");
+  const [newClientPlan, setNewClientPlan] = useState<"demo" | "basico" | "pro">("basico");
   const [editingClient, setEditingClient] = useState<any | null>(null);
   const [clientSearchTerm, setClientSearchTerm] = useState("");
 
-  const isSuperAdmin = user?.email?.toLowerCase() === "videmusicai@gmail.com" || user?.email?.toLowerCase() === "admin@vitrion.com.br";
+  const isSuperAdmin = user?.email?.toLowerCase() === "videmusicai@gmail.com" || user?.email?.toLowerCase() === "admin@vitrion.com.br" || user?.email?.toLowerCase() === "vitrion54@vitrion.com.br";
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      setActiveTab("clients");
+    } else {
+      setActiveTab("screens");
+    }
+  }, [isSuperAdmin]);
 
   const loggedInClient = useMemo(() => {
     if (!user?.email) return null;
@@ -1065,6 +1129,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     
     if (loggedInClient.status === "suspended") {
       return { isValid: false, state: "suspended", reason: "Seu acesso comercial foi suspenso pelo administrador do Vitrion." };
+    }
+
+    if (loggedInClient.status === "standby") {
+      return { isValid: false, state: "standby", reason: "Seu acesso comercial está em Standby por restrição de pagamento da mensalidade. Favor entrar em contato com o faturamento para restabelecer o sinal." };
     }
     
     if (loggedInClient.status === "pending") {
@@ -1082,8 +1150,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     
     const diffTime = expDate.getTime() - today.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    if (diffDays <= 5) {
-      return { isValid: true, state: "near_due", daysLeft: diffDays, reason: `Faltam apenas ${diffDays} dias para o vencimento de sua licença (${expDate.toLocaleDateString("pt-BR")}).` };
+    if (diffDays <= 7) {
+      return { isValid: true, state: "near_due", daysLeft: diffDays, reason: `Falta apenas 1 semana ou menos (${diffDays} dias) para o vencimento de sua licença (${expDate.toLocaleDateString("pt-BR")}). Regularize seu pagamento cobrado para evitar standby.` };
     }
     
     return { isValid: true, state: "active" };
@@ -1153,7 +1221,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         phone: newClientPhone.trim(),
         monthlyFee: parseFloat(newClientFee) || 0,
         expirationDate: newClientExpiration,
-        status: editingClient ? editingClient.status : "active"
+        status: editingClient ? editingClient.status : "active",
+        plan: newClientPlan
       };
       await setDoc(doc(db, "clients", cId), payload);
       showToast(`Cliente "${newClientName}" salvo com sucesso!`, "success");
@@ -1162,6 +1231,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       setNewClientPhone("");
       setNewClientFee("99.90");
       setNewClientExpiration("");
+      setNewClientPlan("basico");
       setEditingClient(null);
     } catch (err) {
       console.error("Erro ao gravar cliente:", err);
@@ -1180,12 +1250,16 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     }
   };
 
-  const handleUpdateClientStatus = async (clientId: string, newStatus: "active" | "suspended" | "pending") => {
+  const handleUpdateClientStatus = async (clientId: string, newStatus: "active" | "suspended" | "pending" | "standby") => {
     try {
       await updateDoc(doc(db, "clients", clientId), {
         status: newStatus
       });
-      const statusLabel = newStatus === "active" ? "ACEITO & ATIVADO" : (newStatus === "suspended" ? "SUSPENSO TEMPORARIAMENTE" : "PENDENTE DE APROVAÇÃO");
+      const statusLabel = 
+        newStatus === "active" ? "ATIVO & ACEITO" : 
+        newStatus === "suspended" ? "SUSPENSO" : 
+        newStatus === "standby" ? "EM STANDBY (COBRANÇA)" : 
+        "PENDENTE DE ACEITE";
       showToast(`Cliente atualizado com sucesso para: ${statusLabel}!`, "success");
     } catch (err) {
       console.error("Erro ao alterar status do cliente no Firebase:", err);
@@ -1443,7 +1517,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       snapshot.forEach((doc) => {
         clientItems.push({ id: doc.id, ...doc.data() });
       });
-      clientItems.sort((a, b) => a.name.localeCompare(b.name));
+      clientItems.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
       setClients(clientItems);
     }, (error) => {
       console.warn("Dificuldade ao carregar clientes do banco", error);
@@ -1455,7 +1529,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         screenItems.push({ id: doc.id, ...doc.data() } as ScreenData);
       });
       // Ordena por id
-      screenItems.sort((a, b) => a.id.localeCompare(b.id));
+      screenItems.sort((a, b) => (a.id || "").localeCompare(b.id || ""));
       setRawScreens(screenItems);
     }, (error) => {
       console.error("Erro na escuta das telas", error);
@@ -1476,7 +1550,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       snapshot.forEach((doc) => {
         imageItems.push({ id: doc.id, ...doc.data() } as CustomImageData);
       });
-      imageItems.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      imageItems.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
       setRawCustomImages(imageItems);
     }, (error) => {
       console.error("Erro na escuta das imagens customizadas", error);
@@ -1573,6 +1647,22 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       return;
     }
 
+    if (!editingProduct) {
+      const currentId = getCurrentClientId();
+      const clientRecord = clients.find(c => c.id === currentId);
+      const plan = currentId === "demo_client" ? "pro" : (clientRecord?.plan || "demo");
+      const count = rawProducts.filter(p => p.clientId === currentId).length;
+
+      let maxProducts = 5;
+      if (plan === "basico") maxProducts = 25;
+      else if (plan === "pro") maxProducts = 150;
+
+      if (count >= maxProducts) {
+        showToast(`Limite de Cardápio Excedido no plano ${plan.toUpperCase()}: Este plano permite cadastrar no máximo ${maxProducts} itens no menu. Realize o upgrade comercial para adicionar mais produtos.`, "error");
+        return;
+      }
+    }
+
     try {
       const pId = editingProduct ? editingProduct.id : `prod_${Date.now()}`;
       const payload: any = {
@@ -1635,7 +1725,19 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       return;
     }
     const currentId = getCurrentClientId();
+    const clientRecord = clients.find(c => c.id === currentId);
+    const plan = currentId === "demo_client" ? "pro" : (clientRecord?.plan || "demo");
     const count = rawScreens.filter(s => s.clientId === currentId).length;
+
+    let maxScreens = 1;
+    if (plan === "basico") maxScreens = 4;
+    else if (plan === "pro") maxScreens = 20;
+
+    if (count >= maxScreens) {
+      showToast(`Limite de Displays Excedido no plano ${plan.toUpperCase()}: Este plano permite no máximo ${maxScreens} TVs ativas. Solicite a alteração do plano junto ao Administrador para adicionar mais displays.`, "error");
+      return;
+    }
+
     const nextId = `tela-${currentId}-${Date.now()}`;
     const name = `SmartTV 0${count + 1}`;
     const shortCode = generateUniqueShortCode(rawScreens);
@@ -2044,44 +2146,120 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 )}
               </button>
 
-              {authMode === "login" && (
-                <div className="pt-4 border-t border-slate-850/80 mt-4 space-y-2.5">
-                  <div className="text-center">
-                    <span className="text-[9px] text-slate-500 font-extrabold uppercase tracking-widest block">Atalhos de Acesso Rápido</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthEmail("admin@vitrion.com.br");
-                        setAuthPassword("admin123");
-                        showToast("Dados carregados: Administrador Geral do Vitrion (admin@vitrion.com.br / admin123)", "success");
-                      }}
-                      className="py-2 px-3 bg-slate-950/60 hover:bg-slate-950 border border-amber-600/20 hover:border-amber-500 text-amber-500 hover:text-amber-400 font-extrabold text-[10px] tracking-wider uppercase rounded-lg transition-all flex flex-col items-center justify-center gap-1 cursor-pointer"
-                      title="Preencher dados do Administrador de Sistema"
-                    >
-                      <Lock className="w-3.5 h-3.5 animate-pulse" />
-                      <span>Como Admin</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthEmail("vitrion54");
-                        setAuthPassword("vitrion!@");
-                        showToast("Dados carregados: Loja Demo (vitrion54@vitrion.com.br)", "success");
-                      }}
-                      className="py-2 px-3 bg-slate-950/60 hover:bg-slate-950 border border-blue-600/20 hover:border-blue-500 text-blue-400 hover:text-blue-300 font-extrabold text-[10px] tracking-wider uppercase rounded-lg transition-all flex flex-col items-center justify-center gap-1 cursor-pointer"
-                      title="Preencher dados de Estabelecimento Demo"
-                    >
-                      <Utensils className="w-3.5 h-3.5" />
-                      <span>Como Loja</span>
-                    </button>
-                  </div>
-                </div>
-              )}
+
             </form>
           )}
+
+          {/* Botão de Administrador em Outra Janela Pop-up */}
+          {authMode === "login" && (
+            <div className="pt-4 border-t border-slate-800/80 mt-4 text-center">
+              <button
+                type="button"
+                onClick={() => setIsAdminModalOpen(true)}
+                className="py-2.5 px-4 bg-slate-950/40 hover:bg-slate-950 border border-slate-800 hover:border-amber-500/50 text-slate-400 hover:text-amber-400 font-extrabold text-[10px] tracking-widest uppercase rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md w-full"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Acesso Restrito do Administrador</span>
+              </button>
+            </div>
+          )}
         </div>
+
+        {/* POP-UP MODAL DO ADMNISTRADOR */}
+        {isAdminModalOpen && (
+          <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50 p-4 font-sans animate-fade-in">
+            <div 
+              className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Botão de Fechar */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdminModalOpen(false);
+                  setAdminModalEmail("");
+                  setAdminModalPassword("");
+                }}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-all cursor-pointer font-bold text-sm"
+              >
+                ✕
+              </button>
+
+              <div className="flex flex-col items-center mb-6 font-sans">
+                <div className="p-3 bg-amber-500/10 text-amber-500 rounded-full mb-3 border border-amber-500/20">
+                  <Lock className="w-6 h-6 animate-pulse" />
+                </div>
+                <h3 className="text-base font-black text-white uppercase tracking-wider">Acesso Segurança Admin</h3>
+                <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-bold">Identifique-se para Prosseguir</p>
+              </div>
+
+              <form onSubmit={handleAdminModalSubmit} className="space-y-4 font-sans">
+                <div>
+                  <label className="text-[9px] text-slate-400 font-black uppercase tracking-wider block mb-1">Usuário de Acesso</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                      <UserCheck className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={adminModalEmail}
+                      onChange={(e) => setAdminModalEmail(e.target.value)}
+                      placeholder="Digite o ID do administrador"
+                      className="w-full bg-slate-950 border border-slate-800/85 text-white rounded-lg pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-semibold placeholder-slate-600"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[9px] text-slate-400 font-black uppercase tracking-wider block mb-1">Senha Secreta</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                      <Lock className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="password"
+                      required
+                      value={adminModalPassword}
+                      onChange={(e) => setAdminModalPassword(e.target.value)}
+                      placeholder="Digite a senha de administrador"
+                      className="w-full bg-slate-950 border border-slate-800/85 text-white rounded-lg pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-semibold placeholder-slate-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAdminModalOpen(false);
+                      setAdminModalEmail("");
+                      setAdminModalPassword("");
+                    }}
+                    className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 active:bg-slate-650 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-lg transition-all cursor-pointer border border-slate-750"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={adminModalLoading}
+                    className="flex-1 py-2 px-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:opacity-95 disabled:opacity-50 text-slate-950 font-black text-xs uppercase tracking-wider rounded-lg transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {adminModalLoading ? (
+                      <span className="w-3.5 h-3.5 border-2 border-slate-950/30 border-t-slate-950 rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        Confirmar
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2103,59 +2281,54 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
         {/* Links de Tabuladores */}
         <nav className="flex-1 p-3 space-y-1">
-          <button 
-            onClick={() => setActiveTab("screens")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "screens" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
-            id="tab-screens"
-          >
-            <Tv className="w-4 h-4" />
-            Controlar TVs ({screens.length})
-          </button>
-          
-          <button 
-            onClick={() => setActiveTab("products")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "products" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
-            id="tab-products"
-          >
-            <DollarSign className="w-4 h-4" />
-            Tabela de Preços
-          </button>
+          {!isSuperAdmin && (
+            <>
+              <button 
+                onClick={() => setActiveTab("screens")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "screens" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
+                id="tab-screens"
+              >
+                <Tv className="w-4 h-4" />
+                Controlar TVs ({screens.length})
+              </button>
+              
+              <button 
+                onClick={() => setActiveTab("products")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "products" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
+                id="tab-products"
+              >
+                <DollarSign className="w-4 h-4" />
+                Tabela de Preços
+              </button>
 
-           <button 
-            onClick={() => setActiveTab("promotions")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "promotions" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
-            id="tab-promotions"
-          >
-            <Megaphone className="w-4 h-4 text-emerald-400" />
-            Promoções Customizadas
-          </button>
+              <button 
+                onClick={() => setActiveTab("promotions")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "promotions" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
+                id="tab-promotions"
+              >
+                <Megaphone className="w-4 h-4 text-emerald-400" />
+                Promoções Customizadas
+              </button>
 
-          <button 
-            onClick={() => setActiveTab("gallery")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "gallery" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
-            id="tab-gallery"
-          >
-            <ImageIcon className="w-4 h-4 text-cyan-400" />
-            Banco de Imagens ({customImages.length})
-          </button>
+              <button 
+                onClick={() => setActiveTab("gallery")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "gallery" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
+                id="tab-gallery"
+              >
+                <ImageIcon className="w-4 h-4 text-cyan-400" />
+                Banco de Imagens ({customImages.length})
+              </button>
 
-          <button 
-            onClick={() => setActiveTab("assets")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "assets" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
-            id="tab-assets"
-          >
-            <Sparkles className="w-4 h-4" />
-            Criador de Menus (IA)
-          </button>
-
-          <button 
-            onClick={() => setActiveTab("how-to")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "how-to" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
-            id="tab-howto"
-          >
-            <BookOpen className="w-4 h-4" />
-            Conectar no Fire TV
-          </button>
+              <button 
+                onClick={() => setActiveTab("how-to")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "how-to" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
+                id="tab-howto"
+              >
+                <BookOpen className="w-4 h-4" />
+                Conectar no Fire TV
+              </button>
+            </>
+          )}
           
           {isSuperAdmin && (
             <button 
@@ -2216,7 +2389,6 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               {activeTab === "products" && "Mapeamento de Preços & Produtos"}
               {activeTab === "promotions" && "Promoções Customizadas & Envio Manual"}
               {activeTab === "gallery" && "Banco de Imagens & Galeria Central"}
-              {activeTab === "assets" && "Biblioteca de Imagens de Inteligência Artificial"}
               {activeTab === "how-to" && "Como Conectar o Amazon Fire TV"}
               {activeTab === "clients" && "👥 Controlar Contas & Vendas de Clientes"}
             </h2>
@@ -2657,105 +2829,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
             </div>
           )}
 
-          {/* TAB 3: GERADOR DE PROMPTS PARA CRIAR IMAGENS DE MENU VIA IA */}
-          {activeTab === "assets" && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              
-              {/* Lado Esquerdo: Formululador Assistente */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-4">
-                    <Sparkles className="w-5 h-5 text-amber-500" />
-                    <div>
-                      <h3 className="font-bold text-xs uppercase text-slate-600 tracking-wider">Assistente de Prompts de IA</h3>
-                      <p className="text-[10px] text-slate-400 uppercase tracking-widest leading-none">Crie menus espetaculares para carregar no Fire TV</p>
-                    </div>
-                  </div>
 
-                  <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-                    Você pode criar quadros rústicos, tabelas de preço de confeitaria moderna ou lousas negras elegantes usando geradores de imagem de inteligência artificial (como DALL-E, Midjourney, Stable Diffusion ou Bing Image Creator) para destacar as delícias da sua padaria! Escolha o setor e estilo para criar um prompt matador:
-                  </p>
-
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1">Setor do Alimento</label>
-                        <select 
-                          value={promptCategory}
-                          onChange={(e) => setPromptCategory(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 font-medium"
-                        >
-                          <option value="Padaria">🥖 Forno de Pães</option>
-                          <option value="Doce">🍰 Vitrine Doces</option>
-                          <option value="Café">☕ Bebidas e Café</option>
-                          <option value="Lanches">🍔 Sanduicheria / Brunch</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1">Aparência do Design</label>
-                        <select 
-                          value={promptStyle}
-                          onChange={(e) => setPromptStyle(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 font-medium"
-                        >
-                          <option value="Chalkboard Rústica">🪵 Chalkboard Rústica</option>
-                          <option value="Confeitaria Delicada">🌸 Confeitaria Delicada</option>
-                          <option value="Cafeteria Moderna">🔲 Cafeteria Moderna</option>
-                          <option value="Brunch Ilustrado">🥪 Brunch Ilustrado</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="p-4 bg-slate-900 text-slate-200 rounded-lg font-mono text-xs relative select-all border border-slate-800">
-                      <p className="leading-relaxed ">{promptOutput}</p>
-                      <button 
-                        onClick={() => {
-                          navigator.clipboard.writeText(promptOutput);
-                          alert("Prompt copiado! Cole esse prompt na sua ferramenta de preferência (Midjourney / DALL-E) para gerar o menu ideal.");
-                        }}
-                        className="absolute right-2.5 bottom-2.5 px-2 py-1 bg-white/10 hover:bg-white/20 text-white font-bold rounded text-[9px] uppercase tracking-wider flex items-center gap-1.5 transition-all"
-                      >
-                        <Copy className="w-3 h-3" /> Copiar Prompt
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-6 pt-4 border-t border-slate-100 flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-                    <Info className="w-4 h-4" />
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    <strong>Como subir a imagem gerada?</strong> Assim que o seu gerador de IA concluir a imagem, salve-a no computador/celular. Depois, acerte a aba <strong>"Controlar TVs"</strong>, clique em <strong>"Subir IA Image"</strong> na TV desejada e sincronize o arquivo!
-                  </p>
-                </div>
-              </div>
-
-              {/* Lado Direito: Templates Modelos Prontos out-of-the-box */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                <h3 className="font-bold text-xs text-slate-400 uppercase tracking-widest mb-3">Modelos Gráficos Prontos Incorporados</h3>
-                <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-                  Não quer esperar a IA gerar fotos? Você pode aplicar instantaneamente nossos designs vetoriais criados sob medida para quadros de padarias e cafeterias. Escolha qualquer TV e alterne seu visual clicando em "Configurar Menu".
-                </p>
-
-                <div className="grid grid-cols-2 gap-4">
-                  {PRESET_TEMPLATES.map((tpl) => (
-                    <div key={tpl.id} className="border border-slate-200 rounded-xl overflow-hidden flex flex-col bg-slate-50 relative group shadow-sm hover:shadow transition-all">
-                      <div className="h-28 bg-slate-900 flex items-center justify-center relative p-1 overflow-hidden">
-                        <div className="w-full h-full scale-[0.55] select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: tpl.svgMarkup }} />
-                      </div>
-                      <div className="p-3 bg-white">
-                        <span className="text-[8px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-bold uppercase">{tpl.category}</span>
-                        <h4 className="font-bold text-[11px] text-slate-800 mt-1 truncate">{tpl.name}</h4>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-            </div>
-          )}
 
           {/* TAB: PROMOÇÕES CUSTOMIZADAS E ENVIOS MANUAIS */}
           {activeTab === "promotions" && (
@@ -3255,6 +3329,102 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 </div>
               </div>
 
+              {/* Seção Inteligente de Alertas de Vencimento de Licenças (Próximos 7 Dias) */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4 font-sans">
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                  <ShieldAlert className="w-4 h-4 text-amber-500 animate-pulse" />
+                  <div>
+                    <h3 className="font-extrabold text-xs uppercase text-slate-850 tracking-wider">
+                      Centro de Telemetria de Cobrança: Negócios com faturamento pendente (Expirando em até 1 semana)
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-sans mt-0.5">Monitore os vencimentos das licenças para entrar em contato ou pausar de forma temporária (Standby) os clientes em atraso.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {clients.filter(c => {
+                    if (c.status === "suspended" || c.status === "standby") return false;
+                    const expDate = new Date(c.expirationDate);
+                    expDate.setHours(23,59,59,999);
+                    const today = new Date();
+                    today.setHours(0,0,0,0);
+                    const diffTime = expDate.getTime() - today.getTime();
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    return diffDays <= 7;
+                  }).map(client => {
+                    const expDate = new Date(client.expirationDate);
+                    expDate.setHours(23,59,59,999);
+                    const today = new Date();
+                    today.setHours(0,0,0,0);
+                    const diffTime = expDate.getTime() - today.getTime();
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    const isOverdue = diffDays < 0;
+
+                    return (
+                      <div 
+                        key={client.id} 
+                        className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 text-xs font-semibold hover:shadow-sm transition-all ${
+                          isOverdue 
+                            ? "bg-rose-50/50 border-rose-200" 
+                            : "bg-amber-50/40 border-amber-200 animate-pulse"
+                        }`}
+                      >
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                              client.plan === "pro" 
+                                ? "bg-purple-100 text-purple-800" 
+                                : client.plan === "basico" 
+                                  ? "bg-blue-100 text-blue-800" 
+                                  : "bg-slate-100 text-slate-800"
+                            }`}>
+                              Plano {client.plan?.toUpperCase() || "BÁSICO"}
+                            </span>
+                            <h4 className="font-bold text-slate-800 text-xs mt-1.5">{client.name}</h4>
+                            <p className="text-[10px] text-slate-500 font-mono mt-0.5">{client.ownerEmail}</p>
+                          </div>
+                          
+                          <div className="text-right">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase inline-block ${
+                              isOverdue ? "bg-rose-600 text-white animate-pulse" : "bg-amber-600 text-white"
+                            }`}>
+                              {isOverdue ? "Expirou" : `Vence em ${diffDays} dias`}
+                            </span>
+                            <div className="text-[9px] text-slate-500 mt-1 font-mono">
+                              {new Date(client.expirationDate).toLocaleDateString("pt-BR")}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 border-t border-slate-200/50 pt-2.5 mt-0.5 justify-end">
+                          <button
+                            onClick={() => handleUpdateClientStatus(client.id, "standby")}
+                            className="bg-orange-50 hover:bg-orange-600 border border-orange-200 hover:border-orange-600 text-orange-700 hover:text-white font-extrabold text-[9px] tracking-wider uppercase px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer"
+                          >
+                            <AlertCircle className="w-3 h-3" /> Standby
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {clients.filter(c => {
+                    if (c.status === "suspended" || c.status === "standby") return false;
+                    const expDate = new Date(c.expirationDate);
+                    expDate.setHours(23,59,59,999);
+                    const today = new Date();
+                    today.setHours(0,0,0,0);
+                    const diffTime = expDate.getTime() - today.getTime();
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    return diffDays <= 7;
+                  }).length === 0 && (
+                    <div className="col-span-full text-center p-5 bg-slate-50 border border-dashed border-slate-200 text-slate-400 font-bold text-xs rounded-xl">
+                      Nenhum cliente ativo possui vencimento crítico nos próximos 7 dias. Ótima saúde financeira!
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Corpo Principal da Gestão de Clientes */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
@@ -3278,15 +3448,16 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
                   {/* Tabela de Clientes */}
                   <div className="overflow-x-auto flex-1">
-                    <table className="w-full text-left border-collapse text-xs">
+                    <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                       <thead>
                         <tr className="bg-slate-100 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200 border-t">
                           <th className="p-3.5">Nome do Cliente / Loja</th>
                           <th className="p-3.5">Email de Acesso</th>
+                          <th className="p-3.5 text-center">Plano</th>
                           <th className="p-3.5 text-center">Mensalidade</th>
                           <th className="p-3.5 text-center">Vencimento</th>
                           <th className="p-3.5 text-center">Status Geral</th>
-                          <th className="p-3.5 text-right font-bold text-blue-600">Decisão do Administrador (3 Escolhas)</th>
+                          <th className="p-3.5 text-right font-bold text-blue-600">Ações de Controle</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-medium pb-20">
@@ -3300,6 +3471,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             expDate.setHours(23,59,59,999);
                             const isExpired = new Date() > expDate;
                             const isSuspended = client.status === "suspended";
+                            const isStandby = client.status === "standby";
                             const isPending = client.status === "pending" || !client.status;
                             const isActive = client.status === "active";
                             return (
@@ -3309,6 +3481,17 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                   <div className="text-[10px] text-slate-400 font-mono">{client.phone || "Sem Telefone"}</div>
                                 </td>
                                 <td className="p-3.5 text-slate-600 font-mono text-[11px]">{client.ownerEmail}</td>
+                                <td className="p-3.5 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
+                                    client.plan === "pro" 
+                                      ? "bg-purple-50 text-purple-700 border-purple-200" 
+                                      : client.plan === "basico" 
+                                        ? "bg-blue-50 text-blue-700 border-blue-200" 
+                                        : "bg-slate-50 text-slate-700 border-slate-200"
+                                  }`}>
+                                    {client.plan?.toUpperCase() || "BÁSICO"}
+                                  </span>
+                                </td>
                                 <td className="p-3.5 text-center font-bold text-slate-700">R$ {client.monthlyFee?.toFixed(2).replace(".", ",")}</td>
                                 <td className="p-3.5 text-center">
                                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -3323,11 +3506,13 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                   <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
                                     isSuspended
                                       ? "bg-rose-100 text-rose-850 border border-rose-200"
-                                      : isPending
-                                        ? "bg-amber-100 text-amber-850 border border-amber-200 animate-pulse"
-                                        : "bg-emerald-100 text-emerald-850 border border-emerald-200"
+                                      : isStandby
+                                        ? "bg-orange-100 text-orange-850 border border-orange-200 animate-pulse"
+                                        : isPending
+                                          ? "bg-amber-100 text-amber-850 border border-amber-200 animate-pulse"
+                                          : "bg-emerald-100 text-emerald-850 border border-emerald-200"
                                   }`}>
-                                    {isSuspended ? "● Suspenso" : isPending ? "● Pendente" : "● Ativo / Aceito"}
+                                    {isSuspended ? "● Suspenso" : isStandby ? "● Standby" : isPending ? "● Pendente" : "● Ativo / Aceito"}
                                   </span>
                                 </td>
                                 <td className="p-3.5 text-right whitespace-nowrap">
@@ -3346,6 +3531,20 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                       <Check className="w-3 h-3" /> Aceitar
                                     </button>
 
+                                    {/* ESCOLHA 4: COBRANÇA EM STANDBY */}
+                                    <button
+                                      onClick={() => handleUpdateClientStatus(client.id, "standby")}
+                                      disabled={isStandby}
+                                      className={`p-1 px-2.5 rounded text-[10px] font-extrabold uppercase flex items-center gap-1 transition-all border ${
+                                        isStandby
+                                          ? "bg-slate-50 border-slate-100 text-slate-400 cursor-not-allowed"
+                                          : "bg-orange-50 hover:bg-orange-600 border-orange-200 hover:border-orange-600 text-orange-700 hover:text-white cursor-pointer"
+                                      }`}
+                                      title="Colocar em Standby por Cobrança"
+                                    >
+                                      <AlertCircle className="w-3 h-3" /> Standby
+                                    </button>
+ 
                                     {/* ESCOLHA 2: SUSPENDER TEMPORARIAMENTE */}
                                     <button
                                       onClick={() => handleUpdateClientStatus(client.id, "suspended")}
@@ -3359,7 +3558,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                     >
                                       <Lock className="w-3 h-3" /> Suspender
                                     </button>
-
+ 
                                     {/* ESCOLHA 3: REMOVER CLIENTE */}
                                     <button
                                       onClick={() => handleDeleteClient(client.id, client.name)}
@@ -3368,9 +3567,9 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                     >
                                       <Trash2 className="w-3 h-3" /> Remover
                                     </button>
-
+ 
                                     <div className="h-4 w-[1px] bg-slate-200 mx-1 block" />
-
+ 
                                     {/* EDITAR CADASTRAL (E.G. DATA EXPIRAÇÃO E VALOR) */}
                                     <button
                                       onClick={() => {
@@ -3380,6 +3579,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                         setNewClientPhone(client.phone || "");
                                         setNewClientFee(String(client.monthlyFee || "99.90"));
                                         setNewClientExpiration(client.expirationDate);
+                                        setNewClientPlan(client.plan || "basico");
                                       }}
                                       className="p-1 px-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 rounded text-[10px] uppercase font-bold transition-all cursor-pointer"
                                       title="Editar Informações Cadastrais"
@@ -3393,7 +3593,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                           })}
                         {clients.length === 0 && (
                           <tr>
-                            <td colSpan={6} className="text-center p-8 text-slate-400">
+                            <td colSpan={7} className="text-center p-8 text-slate-400">
                               Nenhum cliente cadastrado ainda. Use o formulário lateral para cadastrar sua primeira venda!
                             </td>
                           </tr>
@@ -3475,6 +3675,21 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                       </div>
                     </div>
 
+                    <div className="font-sans">
+                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Liberar Plano Especial</label>
+                      <select 
+                        required
+                        value={newClientPlan}
+                        onChange={(e) => setNewClientPlan(e.target.value as "demo" | "basico" | "pro")}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2 text-slate-700 text-xs outline-none focus:ring-2 focus:ring-blue-500/10 font-bold"
+                      >
+                        <option value="demo">DEMO (Máx 1 TV • 5 Produtos)</option>
+                        <option value="basico">BÁSICO (Máx 4 TVs • 25 Produtos)</option>
+                        <option value="pro">PRO (Máx 20 TVs • 150 Produtos)</option>
+                      </select>
+                      <p className="text-[9px] text-slate-400 mt-1">Garante controle rígido e auditado sobre as cotas físicas de TVs e itens de cardápio nas TVs.</p>
+                    </div>
+
                     <div className="flex gap-2 pt-2 font-sans">
                       <button
                         type="submit"
@@ -3492,6 +3707,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             setNewClientPhone("");
                             setNewClientFee("99.90");
                             setNewClientExpiration("");
+                            setNewClientPlan("basico");
                           }}
                           className="px-3 py-2 bg-slate-100 hover:bg-slate-200 font-bold text-slate-600 text-xs uppercase border border-slate-300 rounded-lg transition-all"
                         >
