@@ -39,7 +39,10 @@ import {
   updateDoc, 
   getDocs, 
   deleteDoc, 
-  writeBatch 
+  writeBatch,
+  getDoc,
+  query,
+  where
 } from "firebase/firestore";
 import { signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import { db, auth } from "./firebase";
@@ -67,6 +70,7 @@ interface ScreenData {
   clientId?: string;
   displayMode?: "single" | "playlist";
   playlist?: PlaylistItem[];
+  shortCode?: string;
 }
 
 interface ProductData {
@@ -132,14 +136,46 @@ export function VitrionLogo({ className = "w-8 h-8" }: { className?: string }) {
   );
 }
 
+export function getOrGenerateShortCode(screenId: string): string {
+  if (!screenId) return "10000";
+  // Simple deterministic 5-digit hash of the screenId so it's stable and unique-ish!
+  let hash = 0;
+  for (let i = 0; i < screenId.length; i++) {
+    hash = screenId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const positiveHash = Math.abs(hash);
+  // Ensure exactly 5 digits (between 10000 and 99999)
+  return (10000 + (positiveHash % 90000)).toString();
+}
+
+export const generateUniqueShortCode = (existingScreens: ScreenData[]): string => {
+  let isUnique = false;
+  let code = "";
+  let attempts = 0;
+  while (!isUnique && attempts < 100) {
+    code = Math.floor(10000 + Math.random() * 90000).toString();
+    isUnique = !existingScreens.some(s => s.shortCode === code);
+    attempts++;
+  }
+  return code;
+};
+
 export default function App() {
   // Estado de Roteamento Simples (Baseado em Query Params)
   const [screenParam, setScreenParam] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const screenId = params.get("screen");
-    setScreenParam(screenId);
+    let screenId = params.get("screen");
+    
+    // Se não passou screen no query param, tenta obter a última TV pareada salva no local storage
+    if (!screenId) {
+      screenId = localStorage.getItem("vitrion_paired_screen_id");
+    }
+
+    if (screenId) {
+      setScreenParam(screenId);
+    }
   }, []);
 
   // RENDERIZAÇÃO 1: Tela de Exibição Pública do Amazon Fire TV (Sem headers, sem botões)
@@ -148,7 +184,7 @@ export default function App() {
   }
 
   // RENDERIZAÇÃO 2: Dashboard Administrador Principal
-  return <AdminDashboardView />;
+  return <AdminDashboardView setScreenParam={setScreenParam} />;
 }
 
 // ==========================================
@@ -202,55 +238,79 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
   // Escuta em tempo real o documento da TV no Firestore
   useEffect(() => {
     setLoading(true);
-    const docRef = doc(db, "screens", screenId);
-    
     let unsubscribeClient: (() => void) | null = null;
 
-    const unsubscribeScreen = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = { id: docSnap.id, ...docSnap.data() } as ScreenData;
-        setScreen(data);
-        setError(null);
+    const handleScreenData = (data: ScreenData) => {
+      setScreen(data);
+      setError(null);
 
-        // Se a tela pertence a um cliente, monitora a assinatura do cliente em tempo real
-        if (data.clientId) {
-          if (unsubscribeClient) {
-            (unsubscribeClient as () => void)();
-          }
-          
-          unsubscribeClient = onSnapshot(doc(db, "clients", data.clientId), (clientSnap) => {
-            if (clientSnap.exists()) {
-              const clientData = clientSnap.data();
-              const today = new Date();
-              today.setHours(0,0,0,0);
-              const expDate = new Date(clientData.expirationDate);
-              expDate.setHours(23,59,59,999);
-              
-              if (clientData.status === "suspended") {
-                setSubscriptionError("Esta transmissão foi suspensa pelo administrador da plataforma.");
-              } else if (today > expDate) {
-                setSubscriptionError(`Esta licença para o ponto de exibição expirou em ${new Date(clientData.expirationDate).toLocaleDateString("pt-BR")}. Por favor, realize o acerto da mensalidade para reestabelecer o sinal.`);
-              } else {
-                setSubscriptionError(null);
-              }
-            } else {
-              // Se o cliente foi removido ou não existe no banco, desliga a TV por segurança
-              setSubscriptionError("O transmissor associado a esta TV não foi localizado no cadastro.");
-            }
-          }, (err) => {
-            console.error("Erro ao verificar termo de assinatura da tela", err);
-          });
-        } else {
-          setSubscriptionError(null);
+      // Se a tela pertence a um cliente, monitora a assinatura do cliente em tempo real
+      if (data.clientId) {
+        if (unsubscribeClient) {
+          (unsubscribeClient as () => void)();
         }
+        
+        unsubscribeClient = onSnapshot(doc(db, "clients", data.clientId), (clientSnap) => {
+          if (clientSnap.exists()) {
+            const clientData = clientSnap.data();
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            const expDate = new Date(clientData.expirationDate);
+            expDate.setHours(23,59,59,999);
+            
+            if (clientData.status === "suspended") {
+              setSubscriptionError("Esta transmissão foi suspensa pelo administrador da plataforma.");
+            } else if (today > expDate) {
+              setSubscriptionError(`Esta licença para o ponto de exibição expirou em ${new Date(clientData.expirationDate).toLocaleDateString("pt-BR")}. Por favor, realize o acerto da mensalidade para reestabelecer o sinal.`);
+            } else {
+              setSubscriptionError(null);
+            }
+          } else {
+            // Se o cliente foi removido ou não existe no banco, desliga a TV por segurança
+            setSubscriptionError("O transmissor associado a esta TV não foi localizado no cadastro.");
+          }
+        }, (err) => {
+          console.error("Erro ao verificar termo de assinatura da tela", err);
+        });
       } else {
-        setError(`A tela "${screenId}" não foi encontrada no banco do Vitrion Digital Display. Verifique o ID no painel administrador.`);
+        setSubscriptionError(null);
       }
-      setLoading(false);
-    }, (err) => {
-      setError(`Erro na escuta da tela: ${err.message}`);
-      setLoading(false);
-    });
+    };
+
+    let unsubscribeScreen: () => void;
+    const isShortCode = /^\d{5}$/.test(screenId);
+
+    if (isShortCode) {
+      const q = query(collection(db, "screens"), where("shortCode", "==", screenId));
+      unsubscribeScreen = onSnapshot(q, (snapshot) => {
+        if (!snapshot.empty) {
+          const docSnap = snapshot.docs[0];
+          const data = { id: docSnap.id, ...docSnap.data() } as ScreenData;
+          handleScreenData(data);
+        } else {
+          setError(`Nenhuma TV correspondente ao código "${screenId}" foi localizada no Vitrion.`);
+        }
+        setLoading(false);
+      }, (err) => {
+        console.error("Erro ao conectar ao sinal por código", err);
+        setError("Não foi possível estabelecer contato com a TV por código.");
+        setLoading(false);
+      });
+    } else {
+      const docRef = doc(db, "screens", screenId);
+      unsubscribeScreen = onSnapshot(docRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = { id: docSnap.id, ...docSnap.data() } as ScreenData;
+          handleScreenData(data);
+        } else {
+          setError(`A tela "${screenId}" não foi encontrada no banco do Vitrion Digital Display. Verifique o ID no painel administrador.`);
+        }
+        setLoading(false);
+      }, (err) => {
+        setError(`Erro na escuta da tela: ${err.message}`);
+        setLoading(false);
+      });
+    }
 
     // Escuta em tempo real os produtos para exibir como Overlay se ativado
     const productsRef = collection(db, "products");
@@ -612,20 +672,75 @@ const PROMPT_PROMO_PRESETS = PROMPT_PROMO_PRESETS_RAW.map(item => ({
 // ==========================================
 // VIEW 2: PAINEL ADMINISTRATIVO (DASHBOARD)
 // ==========================================
-function AdminDashboardView() {
+function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) => void }) {
   const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "promotions" | "gallery" | "how-to" | "clients">("screens");
   const [rawScreens, setRawScreens] = useState<ScreenData[]>([]);
   const [rawProducts, setRawProducts] = useState<ProductData[]>([]);
   const [user, setUser] = useState<any>(null);
 
-  // Estados dos Formulários de Autenticação (Login e Registro SaaS)
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  // Estados dos Formulários de Autenticação (Login, Registro SaaS e Pareamento)
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "pair">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authStoreName, setAuthStoreName] = useState("");
   const [authPhone, setAuthPhone] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+
+  // Estados específicos para o modo Pareamento
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingLoading, setPairingLoading] = useState(false);
+  const [pairingError, setPairingError] = useState("");
+
+  const handlePairTV = async (e: FormEvent) => {
+    e.preventDefault();
+    setPairingError("");
+    setPairingLoading(true);
+
+    const code = pairingCode.trim();
+    if (!code) {
+      setPairingError("Por favor, digite o código ou link da TV.");
+      setPairingLoading(false);
+      return;
+    }
+
+    try {
+      let foundScreenId = "";
+      let foundScreenName = "";
+      const isShort = /^\d{5}$/.test(code);
+
+      if (isShort) {
+        const q = query(collection(db, "screens"), where("shortCode", "==", code));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          foundScreenId = snap.docs[0].id;
+          foundScreenName = snap.docs[0].data().name || "TV";
+        }
+      }
+
+      if (!foundScreenId) {
+        const docRef = doc(db, "screens", code);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          foundScreenId = docSnap.id;
+          foundScreenName = docSnap.data().name || "TV";
+        }
+      }
+
+      if (foundScreenId) {
+        localStorage.setItem("vitrion_paired_screen_id", foundScreenId);
+        showToast(`TV "${foundScreenName}" Sintonizada com Sucesso!`, "success");
+        setScreenParam(foundScreenId);
+      } else {
+        setPairingError("Dígitos incorretos. Nenhuma TV cadastrada com este código foi encontrada.");
+      }
+    } catch (err: any) {
+      console.error("Erro ao sintonizar TV", err);
+      setPairingError("Falha na sincronização local. Tente novamente mais tarde.");
+    } finally {
+      setPairingLoading(false);
+    }
+  };
 
   const handleAnonymousLogin = async () => {
     setAuthLoading(true);
@@ -682,6 +797,7 @@ function AdminDashboardView() {
         selectedCategory: "Todas",
         clientId: cliId,
         displayMode: "single",
+        shortCode: "54541",
         playlist: [
           { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
           { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
@@ -776,6 +892,7 @@ function AdminDashboardView() {
                   selectedCategory: "Todas",
                   clientId: cliId,
                   displayMode: "single",
+                  shortCode: getOrGenerateShortCode(`tv_${cred.user.uid}`),
                   playlist: [
                     { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
                     { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
@@ -947,6 +1064,27 @@ function AdminDashboardView() {
     if (isSuperAdmin && selectedClientId === "all") return rawCustomImages;
     return rawCustomImages.filter(img => img.clientId === getCurrentClientId());
   }, [rawCustomImages, selectedClientId, isSuperAdmin, loggedInClient, clients]);
+
+  // Auto-upgrade screens without shortCode
+  useEffect(() => {
+    if (!user) return;
+    const screensToUpgrade = rawScreens.filter((s) => !s.shortCode);
+
+    if (screensToUpgrade.length > 0) {
+      screensToUpgrade.forEach(async (screenToUpgrade) => {
+        const newCode = getOrGenerateShortCode(screenToUpgrade.id);
+        // Softly update in Firestore
+        try {
+          await updateDoc(doc(db, "screens", screenToUpgrade.id), {
+            shortCode: newCode
+          });
+          console.log(`Auto-upgraded screen ${screenToUpgrade.id} with shortCode ${newCode}`);
+        } catch (err) {
+          console.warn("Could not auto-upgrade screen with shortCode", err);
+        }
+      });
+    }
+  }, [rawScreens, user]);
 
   // Declaração de compatibilidade transparente
   const screens = filteredScreens;
@@ -1313,13 +1451,13 @@ function AdminDashboardView() {
 
       // Default Screens
       const defaultScreensList = [
-        { id: "tela-1", name: "Tabela de Pães - Principal", location: "Balcão Administrativo", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Padaria" },
-        { id: "tela-2", name: "Promocional Doces - Vitrina", location: "Vitrine Lateral", status: "online", currentImage: "pastel-sweet", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Doce" },
-        { id: "tela-3", name: "Cafés Exclusivos & Quentes", location: "Entrada Próximo Caixas", status: "online", currentImage: "cozy-coffee", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Café" },
-        { id: "tela-4", name: "Brunch e Almoço do Dia", location: "Bistrô Externo", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Lanches" },
-        { id: "tela-5", name: "Happy Hour & Promoções", location: "Mesas do Deck", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" },
-        { id: "tela-6", name: "Avisos Gerais & Pix", location: "Frente do Caixa 2", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" },
-        { id: "tela-7", name: "Boas-Vindas Institucional", location: "Fachada de Entrada", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" }
+        { id: "tela-1", name: "Tabela de Pães - Principal", location: "Balcão Administrativo", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Padaria", shortCode: "10101" },
+        { id: "tela-2", name: "Promocional Doces - Vitrina", location: "Vitrine Lateral", status: "online", currentImage: "pastel-sweet", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Doce", shortCode: "10102" },
+        { id: "tela-3", name: "Cafés Exclusivos & Quentes", location: "Entrada Próximo Caixas", status: "online", currentImage: "cozy-coffee", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Café", shortCode: "10103" },
+        { id: "tela-4", name: "Brunch e Almoço do Dia", location: "Bistrô Externo", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Lanches", shortCode: "10104" },
+        { id: "tela-5", name: "Happy Hour & Promoções", location: "Mesas do Deck", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas", shortCode: "10105" },
+        { id: "tela-6", name: "Avisos Gerais & Pix", location: "Frente do Caixa 2", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas", shortCode: "10106" },
+        { id: "tela-7", name: "Boas-Vindas Institucional", location: "Fachada de Entrada", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas", shortCode: "10107" }
       ];
 
       for (const dScreen of defaultScreensList) {
@@ -1427,6 +1565,7 @@ function AdminDashboardView() {
     const count = rawScreens.filter(s => s.clientId === currentId).length;
     const nextId = `tela-${currentId}-${Date.now()}`;
     const name = `SmartTV 0${count + 1}`;
+    const shortCode = generateUniqueShortCode(rawScreens);
     try {
       await setDoc(doc(db, "screens", nextId), {
         id: nextId,
@@ -1440,6 +1579,7 @@ function AdminDashboardView() {
         selectedCategory: "Todas",
         clientId: currentId,
         displayMode: "single",
+        shortCode: shortCode,
         playlist: [
           { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
           { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
@@ -1644,14 +1784,15 @@ function AdminDashboardView() {
               onClick={() => {
                 setAuthMode("login");
                 setAuthError("");
+                setPairingError("");
               }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer ${
+              className={`flex-1 py-2 text-[10px] font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer ${
                 authMode === "login"
                   ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              Conectar
+              Entrar
             </button>
             <button
               type="button"
@@ -1659,14 +1800,30 @@ function AdminDashboardView() {
               onClick={() => {
                 setAuthMode("signup");
                 setAuthError("");
+                setPairingError("");
               }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer ${
+              className={`flex-1 py-2 text-[10px] font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer ${
                 authMode === "signup"
                   ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
               Criar Conta
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode("pair");
+                setAuthError("");
+                setPairingError("");
+              }}
+              className={`flex-1 py-2 text-[10px] font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1 ${
+                authMode === "pair"
+                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              📺 Sintonizar TV
             </button>
           </div>
 
@@ -1677,94 +1834,144 @@ function AdminDashboardView() {
             </div>
           )}
 
-          <form onSubmit={handleAuthSubmit} className="space-y-4">
-            {authMode === "signup" && (
+          {authMode === "pair" ? (
+            <form onSubmit={handlePairTV} className="space-y-4">
+              {pairingError && (
+                <div className="mb-4 bg-red-500/10 border border-red-500/30 text-red-200 p-3 rounded-xl flex items-start gap-2.5 text-xs animate-pulse">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+                  <div className="font-semibold">{pairingError}</div>
+                </div>
+              )}
+
+              <div className="text-center space-y-1 mb-4">
+                <p className="text-[11px] text-slate-300 leading-relaxed font-semibold">
+                  Transmita a programação de cardápios inteligentes nesta tela em tela cheia.
+                </p>
+                <p className="text-[10px] text-slate-500">
+                  Digite abaixo os 5 dígitos do código da TV cadastrada que você vê no seu painel administrativo.
+                </p>
+              </div>
+
               <div>
-                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Nome do Estabelecimento / Loja</label>
+                <label className="text-[10px] text-slate-400 block uppercase tracking-wider mb-2 text-center font-bold">Código da TV (5 dígitos)</label>
+                <div className="relative max-w-xs mx-auto">
+                  <input
+                    type="text"
+                    required
+                    maxLength={15}
+                    value={pairingCode}
+                    onChange={(e) => setPairingCode(e.target.value.replace(/\s/g, ""))}
+                    placeholder="EX: 10101"
+                    className="w-full bg-slate-950 border-2 border-blue-500/30 text-white rounded-xl py-3 px-4 text-center font-mono font-black text-xl tracking-widest outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 placeholder-slate-700 uppercase"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={pairingLoading}
+                className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:opacity-90 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-4 cursor-pointer font-semibold"
+              >
+                {pairingLoading ? (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Tv className="w-4 h-4 animate-pulse" />
+                    Sintonizar Display
+                  </>
+                )}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleAuthSubmit} className="space-y-4">
+              {authMode === "signup" && (
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Nome do Estabelecimento / Loja</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                      <Utensils className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={authStoreName}
+                      onChange={(e) => setAuthStoreName(e.target.value)}
+                      placeholder="ex: Padaria Colonial, Cafeteria do Bairro"
+                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Usuário de Acesso</label>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                    <Utensils className="w-4 h-4" />
+                    <UserCheck className="w-4 h-4" />
                   </span>
                   <input
                     type="text"
                     required
-                    value={authStoreName}
-                    onChange={(e) => setAuthStoreName(e.target.value)}
-                    placeholder="ex: Padaria Colonial, Cafeteria do Bairro"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="Seu usuário"
                     className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
                   />
                 </div>
               </div>
-            )}
 
-            <div>
-              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Usuário de Acesso</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                  <UserCheck className="w-4 h-4" />
-                </span>
-                <input
-                  type="text"
-                  required
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  placeholder="Seu usuário"
-                  className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Senha Secreta</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                  <Lock className="w-4 h-4" />
-                </span>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  placeholder="Mínimo de 6 caracteres"
-                  className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
-                />
-              </div>
-            </div>
-
-            {authMode === "signup" && (
               <div>
-                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">WhatsApp / Telefone (Opcional)</label>
+                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Senha Secreta</label>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                    <Megaphone className="w-4 h-4" />
+                    <Lock className="w-4 h-4" />
                   </span>
                   <input
-                    type="text"
-                    value={authPhone}
-                    onChange={(e) => setAuthPhone(e.target.value)}
-                    placeholder="ex: (11) 99999-9999"
+                    type="password"
+                    required
+                    minLength={6}
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Mínimo de 6 caracteres"
                     className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
                   />
                 </div>
               </div>
-            )}
 
-            <button
-              type="submit"
-              disabled={authLoading}
-              className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-blue-600/10 flex items-center justify-center gap-2 mt-4 cursor-pointer"
-            >
-              {authLoading ? (
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  {authMode === "login" ? "Acessar Meu Painel" : "Criar Meu Acesso SaaS"}
-                </>
+              {authMode === "signup" && (
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">WhatsApp / Telefone (Opcional)</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                      <Megaphone className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      value={authPhone}
+                      onChange={(e) => setAuthPhone(e.target.value)}
+                      placeholder="ex: (11) 99999-9999"
+                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                    />
+                  </div>
+                </div>
               )}
-            </button>
-          </form>
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-blue-600/10 flex items-center justify-center gap-2 mt-4 cursor-pointer"
+              >
+                {authLoading ? (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    {authMode === "login" ? "Acessar Meu Painel" : "Criar Meu Acesso SaaS"}
+                  </>
+                )}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     );
@@ -2021,7 +2228,8 @@ function AdminDashboardView() {
 
                     const presetImg = PRESET_TEMPLATES.find(t => t.id === activeImage);
                     const isCustomUploaded = activeImage.startsWith("data:");
-                    const displayUrl = `${window.location.origin}${window.location.pathname}?screen=${sc.id}`;
+                    const scCode = sc.shortCode || getOrGenerateShortCode(sc.id);
+                    const displayUrl = `${window.location.origin}${window.location.pathname}?screen=${scCode}`;
 
                     return (
                       <div key={sc.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between group relative hover:shadow-md transition-all">
@@ -2077,6 +2285,12 @@ function AdminDashboardView() {
                                 <span className="text-slate-500">Mídia Ativa:</span>
                                 <span className="font-semibold text-slate-700 truncate max-w-[120px]">
                                   {presetImg ? presetImg.name : isCustomUploaded ? "Imagem/Promoção Customizada" : "Padrão"}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center text-[10px] bg-blue-50/70 p-1.5 rounded border border-blue-100 mt-2 font-semibold">
+                                <span className="text-blue-700 flex items-center gap-1">📺 Código Pareamento:</span>
+                                <span className="font-mono font-black text-blue-900 bg-white px-2 py-0.5 rounded shadow-sm text-[11px] tracking-widest animate-pulse">
+                                  {scCode}
                                 </span>
                               </div>
                             </div>
@@ -2810,8 +3024,10 @@ function AdminDashboardView() {
 
                 <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex flex-col items-center">
                   <div className="w-8 h-8 rounded-full bg-slate-800 text-white font-mono flex items-center justify-center font-bold text-sm mb-3">2</div>
-                  <h4 className="font-bold text-xs uppercase mb-1">Digitar o Link Exclusivo</h4>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">Cada TV tem seu link próprio (Ex: <code>?screen=tela-1</code>). Digite o link da TV correspondente que você gerou no painel.</p>
+                  <h4 className="font-bold text-xs uppercase mb-1">Sintonizar com Código ou Link Curto</h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Acesse o site do Vitrion diretamente na TV, clique na aba <strong>Sintonizar TV</strong> e digite o <strong>Código de 5 Dígitos</strong> da TV cadastrada, ou apenas digite o link encurtado (Ex: <code>?screen=10101</code>).
+                  </p>
                 </div>
 
                 <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex flex-col items-center">
@@ -2836,21 +3052,24 @@ function AdminDashboardView() {
                 <h4 className="font-bold text-xs text-slate-400 uppercase tracking-widest mb-3">Links Prontos para Testar as TVs da Padaria:</h4>
                 <div className="space-y-2 font-mono text-xs">
                   {screens.map((sc, index) => {
-                    const displayUrl = `${window.location.origin}${window.location.pathname}?screen=${sc.id}`;
+                    const scCode = sc.shortCode || getOrGenerateShortCode(sc.id);
+                    const displayUrl = `${window.location.origin}${window.location.pathname}?screen=${scCode}`;
                     return (
                       <div key={sc.id} className="flex justify-between items-center bg-slate-50 px-4 py-2.5 rounded-lg border border-slate-200 hover:border-blue-500 transition-all">
-                        <div className="truncate max-w-sm md:max-w-md">
-                          <span className="font-bold text-blue-600">TV 0{index + 1}:</span> {sc.name}
+                        <div className="truncate max-w-sm md:max-w-md flex items-center gap-2">
+                          <span className="font-bold text-blue-600">TV 0{index + 1}:</span> 
+                          <span>{sc.name}</span>
+                          <span className="bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[10px]">CÓDIGO: {scCode}</span>
                         </div>
                         <div className="flex gap-2 shrink-0">
                           <button 
                             onClick={() => {
                               navigator.clipboard.writeText(displayUrl);
-                              showToast("URL exclusivo da TV copiado para a área de transferência!", "success");
+                              showToast("URL curto exclusivo da TV copiado para a área de transferência!", "success");
                             }}
                             className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold px-2 py-1 text-[10px] rounded uppercase select-none flex items-center gap-1"
                           >
-                            <Copy className="w-3 h-3" /> Copiar Link
+                            <Copy className="w-3 h-3" /> Copiar Link Curto
                           </button>
                           <a 
                             href={displayUrl} 
@@ -3457,16 +3676,13 @@ function AdminDashboardView() {
             </p>
             <div className="flex flex-col gap-2">
               <button 
-                onClick={() => handleToggleScreenActiveStatus(isDeletingScreen, "offline")}
+                onClick={() => {
+                  handleToggleScreenActiveStatus(isDeletingScreen, "offline");
+                  setIsDeletingScreen(null);
+                }}
                 className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-all"
               >
                 Desativar TV (Standby)
-              </button>
-              <button 
-                onClick={handleDeleteScreen}
-                className="w-full py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-all"
-              >
-                Excluir Cadastro Permanentemente
               </button>
               <button 
                 onClick={() => setIsDeletingScreen(null)}
