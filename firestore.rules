@@ -36,6 +36,7 @@ service cloud.firestore {
         && (data.selectedCategory == null || (data.selectedCategory is string && data.selectedCategory.size() <= 100))
         && (data.clientId == null || (data.clientId is string && data.clientId.size() <= 128))
         && (data.displayMode == null || (data.displayMode is string && data.displayMode.size() <= 20))
+        && (data.shortCode == null || (data.shortCode is string && data.shortCode.size() <= 50))
         && (data.playlist == null || data.playlist is list);
     }
 

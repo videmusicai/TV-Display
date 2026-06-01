@@ -820,7 +820,9 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       formattedEmail = `${formattedEmail.toLowerCase()}@vitrion.com.br`;
     }
 
-    const isVitrion54 = formattedEmail.toLowerCase() === "vitrion54@vitrion.com.br" && authPassword === "vitrion!@";
+    const formattedEmailLower = formattedEmail.toLowerCase();
+    const isVitrion54 = formattedEmailLower === "vitrion54@vitrion.com.br" && authPassword === "vitrion!@";
+    const isAdminBypass = (formattedEmailLower === "admin@vitrion.com.br" || formattedEmailLower === "videmusicai@gmail.com" || formattedEmailLower === "admin") && (authPassword === "admin123" || authPassword === "vitrion!@");
 
     try {
       if (authMode === "login") {
@@ -846,6 +848,46 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               emailVerified: true
             });
             showToast("Painel Vitrion acessado com sucesso (Bypass Local)!", "success");
+            setAuthLoading(false);
+            return;
+          }
+        }
+
+        if (isAdminBypass) {
+          const finalAdminEmail = formattedEmailLower === "admin" ? "admin@vitrion.com.br" : formattedEmailLower;
+          try {
+            let cred;
+            try {
+              cred = await signInWithEmailAndPassword(auth, finalAdminEmail, authPassword);
+            } catch (err: any) {
+              if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
+                try {
+                  cred = await createUserWithEmailAndPassword(auth, finalAdminEmail, authPassword);
+                } catch (createErr) {
+                  console.warn("Erro ao registrar admin no Firebase Auth, usando bypass", createErr);
+                }
+              } else {
+                throw err;
+              }
+            }
+            setUser({
+              uid: cred?.user?.uid || "admin_super_uid",
+              email: finalAdminEmail,
+              isAnonymous: false,
+              emailVerified: true
+            });
+            showToast("Painel do Super Administrador do Vitrion acessado com sucesso!", "success");
+            setAuthLoading(false);
+            return;
+          } catch (bypassErr) {
+            console.warn("Bypass ativado para admin local", bypassErr);
+            setUser({
+              uid: "admin_super_uid",
+              email: finalAdminEmail,
+              isAnonymous: false,
+              emailVerified: true
+            });
+            showToast("Painel do Super Administrador acessado (Bypass Local)!", "success");
             setAuthLoading(false);
             return;
           }
@@ -941,7 +983,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
             contactPhone: authPhone || "",
             monthlyFee: 99.90,
             expirationDate: expiry,
-            status: "active",
+            status: "pending",
             createdAt: new Date().toISOString()
           });
 
@@ -1023,6 +1065,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     
     if (loggedInClient.status === "suspended") {
       return { isValid: false, state: "suspended", reason: "Seu acesso comercial foi suspenso pelo administrador do Vitrion." };
+    }
+    
+    if (loggedInClient.status === "pending") {
+      return { isValid: false, state: "pending", reason: "Seu cadastro está em análise. Por favor, aguarde o aceite do administrador do Vitrion para liberar o uso e o sinal." };
     }
     
     const today = new Date();
@@ -1124,26 +1170,26 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   };
 
   const handleDeleteClient = async (id: string, name: string) => {
-    if (!window.confirm(`Deseja realmente apagar o cliente "${name}"? Todas as TVs sintonizadas a ele perderão o sinal.`)) return;
+    if (!window.confirm(`Deseja realmente remover o cliente "${name}" permanentemente do Vitrion? Todas as TVs sintonizadas a ele perderão o sinal.`)) return;
     try {
       await deleteDoc(doc(db, "clients", id));
-      showToast(`Cliente "${name}" excluído do sistema.`, "success");
+      showToast(`Cliente "${name}" excluído e removido do sistema com sucesso!`, "success");
     } catch (err) {
       console.error("Erro ao excluir cliente:", err);
-      showToast("Erro ao remover cliente.", "error");
+      showToast("Erro ao remover o cliente e suas chaves do Firebase.", "error");
     }
   };
 
-  const toggleClientStatus = async (client: any) => {
-    const nextStatus = client.status === "active" ? "suspended" : "active";
+  const handleUpdateClientStatus = async (clientId: string, newStatus: "active" | "suspended" | "pending") => {
     try {
-      await updateDoc(doc(db, "clients", client.id), {
-        status: nextStatus
+      await updateDoc(doc(db, "clients", clientId), {
+        status: newStatus
       });
-      showToast(`Cliente "${client.name}" está agora ${nextStatus === "active" ? "Ativo" : "Suspenso"}!`, "success");
+      const statusLabel = newStatus === "active" ? "ACEITO & ATIVADO" : (newStatus === "suspended" ? "SUSPENSO TEMPORARIAMENTE" : "PENDENTE DE APROVAÇÃO");
+      showToast(`Cliente atualizado com sucesso para: ${statusLabel}!`, "success");
     } catch (err) {
-      console.error("Erro ao alterar status:", err);
-      showToast("Erro ao alterar status do cliente.", "error");
+      console.error("Erro ao alterar status do cliente no Firebase:", err);
+      showToast("Erro ao processar alteração de status do cliente.", "error");
     }
   };
 
@@ -1448,38 +1494,65 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const handleInitializeDefaults = async () => {
     try {
       const batch = writeBatch(db);
+      const currentId = getCurrentClientId();
 
       // Default Screens
-      const defaultScreensList = [
-        { id: "tela-1", name: "Tabela de Pães - Principal", location: "Balcão Administrativo", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Padaria", shortCode: "10101" },
-        { id: "tela-2", name: "Promocional Doces - Vitrina", location: "Vitrine Lateral", status: "online", currentImage: "pastel-sweet", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Doce", shortCode: "10102" },
-        { id: "tela-3", name: "Cafés Exclusivos & Quentes", location: "Entrada Próximo Caixas", status: "online", currentImage: "cozy-coffee", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Café", shortCode: "10103" },
-        { id: "tela-4", name: "Brunch e Almoço do Dia", location: "Bistrô Externo", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Lanches", shortCode: "10104" },
-        { id: "tela-5", name: "Happy Hour & Promoções", location: "Mesas do Deck", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas", shortCode: "10105" },
-        { id: "tela-6", name: "Avisos Gerais & Pix", location: "Frente do Caixa 2", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas", shortCode: "10106" },
-        { id: "tela-7", name: "Boas-Vindas Institucional", location: "Fachada de Entrada", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas", shortCode: "10107" }
+      const defaultScreensRaw = [
+        { suffix: "1", name: "Tabela de Pães - Principal", location: "Balcão Administrativo", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Padaria" },
+        { suffix: "2", name: "Promocional Doces - Vitrina", location: "Vitrine Lateral", status: "online", currentImage: "pastel-sweet", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Doce" },
+        { suffix: "3", name: "Cafés Exclusivos & Quentes", location: "Entrada Próximo Caixas", status: "online", currentImage: "cozy-coffee", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Café" },
+        { suffix: "4", name: "Brunch e Almoço do Dia", location: "Bistrô Externo", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Lanches" },
+        { suffix: "5", name: "Happy Hour & Promoções", location: "Mesas do Deck", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" },
+        { suffix: "6", name: "Avisos Gerais & Pix", location: "Frente do Caixa 2", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" },
+        { suffix: "7", name: "Boas-Vindas Institucional", location: "Fachada de Entrada", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" }
       ];
 
-      for (const dScreen of defaultScreensList) {
-        const docRef = doc(db, "screens", dScreen.id);
-        batch.set(docRef, dScreen);
+      for (const dScreen of defaultScreensRaw) {
+        const docId = `tela-${currentId}-${dScreen.suffix}`;
+        const sCode = getOrGenerateShortCode(docId);
+        const completeScreen: ScreenData = {
+          id: docId,
+          name: dScreen.name,
+          location: dScreen.location,
+          status: dScreen.status as "online" | "offline",
+          currentImage: dScreen.currentImage,
+          aspectRatio: dScreen.aspectRatio as "16:9" | "9:16",
+          lastSync: dScreen.lastSync,
+          overlayPrices: dScreen.overlayPrices,
+          selectedCategory: dScreen.selectedCategory,
+          clientId: currentId,
+          displayMode: "single",
+          playlist: [],
+          shortCode: sCode
+        };
+        const docRef = doc(db, "screens", docId);
+        batch.set(docRef, completeScreen);
       }
 
       // Default Products
-      const defaultProductsList = [
-        { id: "p1", name: "Pão Francês Fresquinho (kg)", price: 14.90, category: "Padaria", available: true },
-        { id: "p2", name: "Croissant Folhado Clássico", price: 8.50, category: "Padaria", available: true },
-        { id: "p3", name: "Pão de Queijo Cascudo (un)", price: 4.50, category: "Padaria", available: true },
-        { id: "p4", name: "Sonho Tradicional de Creme", price: 7.90, category: "Doce", available: true },
-        { id: "p5", name: "Fatia Bolo Triplo Chocolate", price: 12.00, category: "Doce", available: true },
-        { id: "p6", name: "Café Expresso Intensidade 8", price: 5.50, category: "Café", available: true },
-        { id: "p7", name: "Caffè Latte Cremoso Médio", price: 7.90, category: "Café", available: true },
-        { id: "p8", name: "Sanduíche Panini de Presunto e Queijo", price: 15.90, category: "Lanches", available: true }
+      const defaultProductsRaw = [
+        { suffix: "p1", name: "Pão Francês Fresquinho (kg)", price: 14.90, category: "Padaria", available: true },
+        { suffix: "p2", name: "Croissant Folhado Clássico", price: 8.50, category: "Padaria", available: true },
+        { suffix: "p3", name: "Pão de Queijo Cascudo (un)", price: 4.50, category: "Padaria", available: true },
+        { suffix: "p4", name: "Sonho Tradicional de Creme", price: 7.90, category: "Doce", available: true },
+        { suffix: "p5", name: "Fatia Bolo Triplo Chocolate", price: 12.00, category: "Doce", available: true },
+        { suffix: "p6", name: "Café Expresso Intensidade 8", price: 5.50, category: "Café", available: true },
+        { suffix: "p7", name: "Caffè Latte Cremoso Médio", price: 7.90, category: "Café", available: true },
+        { suffix: "p8", name: "Sanduíche Panini de Presunto e Queijo", price: 15.90, category: "Lanches", available: true }
       ];
 
-      for (const dProd of defaultProductsList) {
-        const docRef = doc(db, "products", dProd.id);
-        batch.set(docRef, dProd);
+      for (const dProd of defaultProductsRaw) {
+        const docId = `prod-${currentId}-${dProd.suffix}`;
+        const completeProduct: ProductData = {
+          id: docId,
+          name: dProd.name,
+          price: dProd.price,
+          category: dProd.category,
+          available: dProd.available,
+          clientId: currentId
+        };
+        const docRef = doc(db, "products", docId);
+        batch.set(docRef, completeProduct);
       }
 
       await batch.commit();
@@ -1970,6 +2043,42 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                   </>
                 )}
               </button>
+
+              {authMode === "login" && (
+                <div className="pt-4 border-t border-slate-850/80 mt-4 space-y-2.5">
+                  <div className="text-center">
+                    <span className="text-[9px] text-slate-500 font-extrabold uppercase tracking-widest block">Atalhos de Acesso Rápido</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthEmail("admin@vitrion.com.br");
+                        setAuthPassword("admin123");
+                        showToast("Dados carregados: Administrador Geral do Vitrion (admin@vitrion.com.br / admin123)", "success");
+                      }}
+                      className="py-2 px-3 bg-slate-950/60 hover:bg-slate-950 border border-amber-600/20 hover:border-amber-500 text-amber-500 hover:text-amber-400 font-extrabold text-[10px] tracking-wider uppercase rounded-lg transition-all flex flex-col items-center justify-center gap-1 cursor-pointer"
+                      title="Preencher dados do Administrador de Sistema"
+                    >
+                      <Lock className="w-3.5 h-3.5 animate-pulse" />
+                      <span>Como Admin</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthEmail("vitrion54");
+                        setAuthPassword("vitrion!@");
+                        showToast("Dados carregados: Loja Demo (vitrion54@vitrion.com.br)", "success");
+                      }}
+                      className="py-2 px-3 bg-slate-950/60 hover:bg-slate-950 border border-blue-600/20 hover:border-blue-500 text-blue-400 hover:text-blue-300 font-extrabold text-[10px] tracking-wider uppercase rounded-lg transition-all flex flex-col items-center justify-center gap-1 cursor-pointer"
+                      title="Preencher dados de Estabelecimento Demo"
+                    >
+                      <Utensils className="w-3.5 h-3.5" />
+                      <span>Como Loja</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </form>
           )}
         </div>
@@ -3171,16 +3280,16 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                   <div className="overflow-x-auto flex-1">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-slate-100 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                        <tr className="bg-slate-100 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200 border-t">
                           <th className="p-3.5">Nome do Cliente / Loja</th>
                           <th className="p-3.5">Email de Acesso</th>
                           <th className="p-3.5 text-center">Mensalidade</th>
                           <th className="p-3.5 text-center">Vencimento</th>
-                          <th className="p-3.5 text-center">Status</th>
-                          <th className="p-3.5 text-right">Ações</th>
+                          <th className="p-3.5 text-center">Status Geral</th>
+                          <th className="p-3.5 text-right font-bold text-blue-600">Decisão do Administrador (3 Escolhas)</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 font-medium">
+                      <tbody className="divide-y divide-slate-100 font-medium pb-20">
                         {clients
                           .filter(c => 
                             c.name.toLowerCase().includes(clientSearchTerm.toLowerCase()) || 
@@ -3191,6 +3300,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             expDate.setHours(23,59,59,999);
                             const isExpired = new Date() > expDate;
                             const isSuspended = client.status === "suspended";
+                            const isPending = client.status === "pending" || !client.status;
+                            const isActive = client.status === "active";
                             return (
                               <tr key={client.id} className="hover:bg-slate-50/50 transition-colors">
                                 <td className="p-3.5">
@@ -3209,20 +3320,58 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                   </span>
                                 </td>
                                 <td className="p-3.5 text-center">
-                                  <button
-                                    onClick={() => toggleClientStatus(client)}
-                                    title="Clique para Ativar ou Suspender"
-                                    className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase transition-all ${
-                                      isSuspended
-                                        ? "bg-red-100 text-red-800 hover:bg-red-200"
-                                        : "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                                    }`}
-                                  >
-                                    {isSuspended ? "● Suspenso" : "● Ativo"}
-                                  </button>
+                                  <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
+                                    isSuspended
+                                      ? "bg-rose-100 text-rose-850 border border-rose-200"
+                                      : isPending
+                                        ? "bg-amber-100 text-amber-850 border border-amber-200 animate-pulse"
+                                        : "bg-emerald-100 text-emerald-850 border border-emerald-200"
+                                  }`}>
+                                    {isSuspended ? "● Suspenso" : isPending ? "● Pendente" : "● Ativo / Aceito"}
+                                  </span>
                                 </td>
                                 <td className="p-3.5 text-right whitespace-nowrap">
-                                  <div className="flex justify-end gap-1.5">
+                                  <div className="flex justify-end items-center gap-1.5">
+                                    {/* ESCOLHA 1: ACEITAR */}
+                                    <button
+                                      onClick={() => handleUpdateClientStatus(client.id, "active")}
+                                      disabled={isActive}
+                                      className={`p-1 px-2.5 rounded text-[10px] font-extrabold uppercase flex items-center gap-1 transition-all border ${
+                                        isActive
+                                          ? "bg-slate-50 border-slate-100 text-slate-400 cursor-not-allowed"
+                                          : "bg-emerald-50 hover:bg-emerald-600 border-emerald-200 hover:border-emerald-600 text-emerald-700 hover:text-white cursor-pointer"
+                                      }`}
+                                      title="Aceitar e Ativar Cliente"
+                                    >
+                                      <Check className="w-3 h-3" /> Aceitar
+                                    </button>
+
+                                    {/* ESCOLHA 2: SUSPENDER TEMPORARIAMENTE */}
+                                    <button
+                                      onClick={() => handleUpdateClientStatus(client.id, "suspended")}
+                                      disabled={isSuspended}
+                                      className={`p-1 px-2.5 rounded text-[10px] font-extrabold uppercase flex items-center gap-1 transition-all border ${
+                                        isSuspended
+                                          ? "bg-slate-50 border-slate-100 text-slate-400 cursor-not-allowed"
+                                          : "bg-amber-50 hover:bg-amber-600 border-amber-200 hover:border-amber-600 text-amber-700 hover:text-white cursor-pointer"
+                                      }`}
+                                      title="Suspender Temporariamente"
+                                    >
+                                      <Lock className="w-3 h-3" /> Suspender
+                                    </button>
+
+                                    {/* ESCOLHA 3: REMOVER CLIENTE */}
+                                    <button
+                                      onClick={() => handleDeleteClient(client.id, client.name)}
+                                      className="p-1 px-2.5 bg-rose-50 hover:bg-rose-600 border border-rose-200 hover:border-rose-600 text-rose-700 hover:text-white rounded text-[10px] font-extrabold uppercase flex items-center gap-1 transition-all cursor-pointer"
+                                      title="Excluir Permanentemente"
+                                    >
+                                      <Trash2 className="w-3 h-3" /> Remover
+                                    </button>
+
+                                    <div className="h-4 w-[1px] bg-slate-200 mx-1 block" />
+
+                                    {/* EDITAR CADASTRAL (E.G. DATA EXPIRAÇÃO E VALOR) */}
                                     <button
                                       onClick={() => {
                                         setEditingClient(client);
@@ -3232,17 +3381,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                         setNewClientFee(String(client.monthlyFee || "99.90"));
                                         setNewClientExpiration(client.expirationDate);
                                       }}
-                                      className="p-1 px-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 rounded transition-all"
-                                      title="Editar Informações"
+                                      className="p-1 px-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 rounded text-[10px] uppercase font-bold transition-all cursor-pointer"
+                                      title="Editar Informações Cadastrais"
                                     >
                                       Editar
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteClient(client.id, client.name)}
-                                      className="p-1 px-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent rounded transition-all"
-                                      title="Excluir do Sistema"
-                                    >
-                                      Excluir
                                     </button>
                                   </div>
                                 </td>
