@@ -12,7 +12,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-+]+$');
+      return id is string && id.size() <= 128;
     }
 
     function incoming() {
@@ -31,7 +31,9 @@ service cloud.firestore {
         && (data.currentImage == null || (data.currentImage is string && data.currentImage.size() <= 10485760))
         && (data.lastSync == null || (data.lastSync is string && data.lastSync.size() <= 200))
         && (data.aspectRatio == null || (data.aspectRatio is string && data.aspectRatio.size() <= 20))
-        && (data.status == null || (data.status is string && data.status.size() <= 20));
+        && (data.status == null || (data.status is string && data.status.size() <= 20))
+        && (data.overlayPrices == null || data.overlayPrices is bool)
+        && (data.selectedCategory == null || (data.selectedCategory is string && data.selectedCategory.size() <= 100));
     }
 
     // Products validation helper
@@ -41,6 +43,14 @@ service cloud.firestore {
         && data.price is number && data.price >= 0
         && (data.category == null || (data.category is string && data.category.size() <= 100))
         && (data.available == null || data.available is bool);
+    }
+
+    // Custom Images validation helper
+    function isValidCustomImage(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.base64 is string && data.base64.size() <= 10485760
+        && (data.createdAt == null || (data.createdAt is string && data.createdAt.size() <= 200));
     }
 
     // Screens collection
@@ -56,6 +66,14 @@ service cloud.firestore {
       allow get, list: if true;
       allow create: if isValidId(productId) && isValidProduct(incoming());
       allow update: if isValidId(productId) && isValidProduct(incoming());
+      allow delete: if true;
+    }
+
+    // Custom Images collection
+    match /custom_images/{imageId} {
+      allow get, list: if true;
+      allow create: if isValidId(imageId) && isValidCustomImage(incoming());
+      allow update: if isValidId(imageId) && isValidCustomImage(incoming());
       allow delete: if true;
     }
   }

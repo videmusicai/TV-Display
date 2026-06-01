@@ -11,7 +11,9 @@
         "currentImage": { "type": "string" },
         "lastSync": { "type": "string" },
         "aspectRatio": { "type": "string" },
-        "status": { "type": "string" }
+        "status": { "type": "string" },
+        "overlayPrices": { "type": "boolean" },
+        "selectedCategory": { "type": "string" }
       },
       "required": ["id", "name"]
     },
@@ -27,6 +29,18 @@
         "available": { "type": "boolean" }
       },
       "required": ["id", "name", "price"]
+    },
+    "CustomImage": {
+      "title": "CustomImage",
+      "description": "Custom uploaded promotion images stored in the database",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "base64": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "base64"]
     }
   },
   "firestore": {
@@ -37,6 +51,10 @@
     "products/{productId}": {
       "schema": "Product",
       "description": "Collection of products for pricing catalog"
+    },
+    "custom_images/{imageId}": {
+      "schema": "CustomImage",
+      "description": "Collection of user-uploaded promotional images for screens"
     }
   }
 }

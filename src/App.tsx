@@ -60,6 +60,13 @@ interface ProductData {
   available: boolean;
 }
 
+interface CustomImageData {
+  id: string;
+  name: string;
+  base64: string;
+  createdAt: string;
+}
+
 // Componente de Logo Oficial do Vitrion Digital Display em SVG Vetorial de Alta Resolução
 export function VitrionLogo({ className = "w-8 h-8" }: { className?: string }) {
   return (
@@ -133,6 +140,15 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
   const [products, setProducts] = useState<ProductData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [introTimerDone, setIntroTimerDone] = useState(false);
+
+  // Garante pelo menos 5 segundos de exibição do Logo Splash no início da TV
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIntroTimerDone(true);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Escuta em tempo real o documento da TV no Firestore
   useEffect(() => {
@@ -170,14 +186,49 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
     };
   }, [screenId]);
 
-  if (loading) {
+  if (loading || !introTimerDone) {
     return (
-      <div className="w-screen h-screen bg-slate-950 flex flex-col items-center justify-center text-white font-sans gap-6">
-        <div className="relative flex items-center justify-center w-24 h-24">
-          <div className="absolute inset-0 bg-blue-500/20 rounded-full animate-ping opacity-60" />
-          <VitrionLogo className="w-16 h-16 relative z-10 animate-pulse" />
+      <div className="w-screen h-screen bg-slate-950 flex flex-col items-center justify-center text-white font-sans gap-8 select-none relative overflow-hidden">
+        {/* Efeito sutil de brilho azul no fundo */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 blur-[120px] rounded-full pointer-events-none" />
+        
+        <div className="relative flex items-center justify-center w-32 h-32 animate-fade-in">
+          {/* Círculos pulsantes externos */}
+          <div className="absolute inset-0 bg-blue-500/20 rounded-full animate-ping opacity-70" />
+          <div className="absolute inset-4 bg-orange-500/10 rounded-full animate-pulse opacity-50" />
+          
+          <VitrionLogo className="w-20 h-20 relative z-10 drop-shadow-[0_0_20px_rgba(59,130,246,0.3)]" />
         </div>
-        <p className="text-sm font-semibold tracking-widest text-slate-400 animate-pulse">VITRION DIGITAL DISPLAY • INSTALANDO CANAIS DO FIRE TV...</p>
+
+        <div className="flex flex-col items-center gap-1.5 relative z-10 text-center animate-fade-in">
+          <h1 className="text-xl font-black uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400 font-sans leading-none">
+            Vitrion
+          </h1>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.4em] leading-none mt-1">
+            Digital Display
+          </span>
+          <p className="text-[11px] text-slate-500 uppercase tracking-widest font-semibold mt-4 flex items-center gap-2">
+            <span className="w-2 h-2 bg-blue-500 rounded-full animate-ping" />
+            Iniciando transmissão segura...
+          </p>
+        </div>
+
+        {/* Barra de progresso elegante de 5 segundos */}
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 w-64 h-1.5 bg-slate-900 border border-white/5 rounded-full overflow-hidden">
+          <div 
+            className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 rounded-full"
+            style={{
+              animation: "loading-bar 5s linear forwards"
+            }}
+          />
+        </div>
+
+        <style dangerouslySetInnerHTML={{ __html: `
+          @keyframes loading-bar {
+            0% { width: 0%; }
+            100% { width: 100%; }
+          }
+        `}} />
       </div>
     );
   }
@@ -262,20 +313,6 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
           </div>
         </div>
       )}
-
-      {/* 3. LOGOMARCA OFICIAL FLUTUANTE (BRANDEADO DO VITRION DIGITAL DISPLAY) */}
-      <div className="absolute left-8 top-8 z-50 flex items-center gap-2.5 bg-slate-950/85 backdrop-blur-md border border-white/10 px-4 py-2.5 rounded-2xl shadow-2xl animate-fade-in select-none">
-        <VitrionLogo className="w-8 h-8" />
-        <div className="flex flex-col">
-          <span className="text-xs font-black uppercase tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400 font-sans leading-none">
-            Vitrion
-          </span>
-          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 leading-none">
-            Digital Display
-          </span>
-        </div>
-      </div>
-
       {/* Identificador Sutil de Tela Cheia no Canto */}
       <div className="absolute left-6 bottom-6 text-[10px] font-mono text-white/20 bg-black/40 px-2 py-1 rounded">
         Vitrion Digital Display Screen: {screen?.id} • {screen?.name}
@@ -422,10 +459,18 @@ const PROMPT_PROMO_PRESETS = PROMPT_PROMO_PRESETS_RAW.map(item => ({
 // VIEW 2: PAINEL ADMINISTRATIVO (DASHBOARD)
 // ==========================================
 function AdminDashboardView() {
-  const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "promotions" | "how-to">("screens");
+  const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "promotions" | "gallery" | "how-to">("screens");
   const [screens, setScreens] = useState<ScreenData[]>([]);
   const [products, setProducts] = useState<ProductData[]>([]);
   const [user, setUser] = useState<any>(null);
+
+  // Banco de Imagens em Nuvem
+  const [customImages, setCustomImages] = useState<CustomImageData[]>([]);
+  const [galleryFileBase64, setGalleryFileBase64] = useState<string | null>(null);
+  const [galleryFileName, setGalleryFileName] = useState<string>("");
+  const [uploadingToGallery, setUploadingToGallery] = useState(false);
+  const [targetBroadcastingImage, setTargetBroadcastingImage] = useState<CustomImageData | null>(null);
+  const [broadcastingScreens, setBroadcastingScreens] = useState<string[]>([]);
 
   // Estados para Promoções Customizadas e Envios Manuais
   const [promoFileBase64, setPromoFileBase64] = useState<string | null>(null);
@@ -503,6 +548,118 @@ function AdminDashboardView() {
     } catch (err: unknown) {
       console.error("Erro ao sintonizar promoção:", err);
       showToast("Erro ao sintonizar promoção nas TVs selecionadas.", "error");
+    }
+  };
+
+  // Seleção e compressão inteligente de imagens para salvamento em Banco de Dados
+  const handleGalleryFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 12 * 1024 * 1024) {
+      showToast("A imagem excedeu o limite máximo recomendado de 12MB.", "error");
+      return;
+    }
+
+    setGalleryFileName(file.name.split(".")[0]); // Pré-preenche o nome amigável
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1280; // Ideal para TVs de Alta Definição
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL("image/jpeg", 0.85);
+          setGalleryFileBase64(compressed);
+          showToast("A imagem foi processada e está pronta para o Banco de Dados!", "success");
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Salvar imagem customizada no Banco de Dados Firestore
+  const handleSaveToGallery = async () => {
+    if (!galleryFileBase64) {
+      showToast("Selecione uma imagem promocional ou cartaz primeiro.", "info");
+      return;
+    }
+
+    setUploadingToGallery(true);
+    try {
+      const imgName = galleryFileName.trim() || `Promoção ${new Date().toLocaleDateString()}`;
+      const newId = `img-${Date.now()}`;
+      
+      await setDoc(doc(db, "custom_images", newId), {
+        id: newId,
+        name: imgName,
+        base64: galleryFileBase64,
+        createdAt: new Date().toISOString()
+      });
+
+      showToast(`Imagem "${imgName}" salva com sucesso no Banco de Dados Central!`, "success");
+      setGalleryFileBase64(null);
+      setGalleryFileName("");
+    } catch (err: unknown) {
+      console.error("Erro ao salvar imagem no banco de dados:", err);
+      showToast("Erro ao guardar no banco de dados.", "error");
+    } finally {
+      setUploadingToGallery(false);
+    }
+  };
+
+  // Excluir imagem do Banco de Dados Firestore
+  const handleDeleteFromGallery = async (imageId: string, imageName: string) => {
+    try {
+      await deleteDoc(doc(db, "custom_images", imageId));
+      showToast(`Imagem "${imageName}" removida do Banco de Dados!`, "success");
+    } catch (err: unknown) {
+      console.error("Erro ao remover imagem do banco de dados:", err);
+      showToast("Erro ao remover a imagem selecionada.", "error");
+    }
+  };
+
+  // Transmitir imagem do Banco de Dados para múltiplas TVs ao mesmo tempo
+  const handleBroadcastGalleryImage = async () => {
+    if (!targetBroadcastingImage) return;
+    if (broadcastingScreens.length === 0) {
+      showToast("Selecione pelo menos uma SmartTV para transmitir.", "info");
+      return;
+    }
+
+    try {
+      showToast("Sintonizando imagem nas TVs selecionadas...", "info");
+      const promises = broadcastingScreens.map((scId) => 
+        updateDoc(doc(db, "screens", scId), {
+          currentImage: targetBroadcastingImage.base64,
+          lastSync: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+        })
+      );
+      await Promise.all(promises);
+      showToast(`Mídia "${targetBroadcastingImage.name}" transmitida em tempo real!`, "success");
+      setTargetBroadcastingImage(null);
+      setBroadcastingScreens([]);
+    } catch (err: unknown) {
+      console.error("Erro ao sintonizar imagem no banco:", err);
+      showToast("Erro de transmissão de sinal.", "error");
     }
   };
   
@@ -592,9 +749,21 @@ function AdminDashboardView() {
       console.error("Erro na escuta dos produtos", error);
     });
 
+    const unsubscribeCustomImages = onSnapshot(collection(db, "custom_images"), (snapshot) => {
+      const imageItems: CustomImageData[] = [];
+      snapshot.forEach((doc) => {
+        imageItems.push({ id: doc.id, ...doc.data() } as CustomImageData);
+      });
+      imageItems.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      setCustomImages(imageItems);
+    }, (error) => {
+      console.error("Erro na escuta das imagens customizadas", error);
+    });
+
     return () => {
       unsubscribeScreens();
       unsubscribeProducts();
+      unsubscribeCustomImages();
     };
   }, []);
 
@@ -846,13 +1015,22 @@ function AdminDashboardView() {
             Tabela de Preços
           </button>
 
-          <button 
+           <button 
             onClick={() => setActiveTab("promotions")}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "promotions" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
             id="tab-promotions"
           >
             <Megaphone className="w-4 h-4 text-emerald-400" />
             Promoções Customizadas
+          </button>
+
+          <button 
+            onClick={() => setActiveTab("gallery")}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "gallery" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
+            id="tab-gallery"
+          >
+            <ImageIcon className="w-4 h-4 text-cyan-400" />
+            Banco de Imagens ({customImages.length})
           </button>
 
           <button 
@@ -904,6 +1082,7 @@ function AdminDashboardView() {
               {activeTab === "screens" && "Gerenciar TVs Digitais"}
               {activeTab === "products" && "Mapeamento de Preços & Produtos"}
               {activeTab === "promotions" && "Promoções Customizadas & Envio Manual"}
+              {activeTab === "gallery" && "Banco de Imagens & Galeria Central"}
               {activeTab === "assets" && "Biblioteca de Imagens de Inteligência Artificial"}
               {activeTab === "how-to" && "Como Conectar o Amazon Fire TV"}
             </h2>
@@ -1562,6 +1741,163 @@ function AdminDashboardView() {
             </div>
           )}
 
+          {/* TAB: BANCO DE IMAGENS E GALERIA EM NUVEM */}
+          {activeTab === "gallery" && (
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 animate-fade-in">
+              
+              {/* Esquerda: Enviar para o Banco de Dados */}
+              <div className="xl:col-span-4 space-y-6">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-5">
+                    <Plus className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <h3 className="font-bold text-xs uppercase text-slate-800 tracking-wider">Novo Registro no Banco</h3>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest leading-none">Cadastrar nova mídia em nuvem no sistema</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Input de Nome */}
+                    <div>
+                      <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1.5">Nome da Imagem / Campanha</label>
+                      <input 
+                        type="text"
+                        value={galleryFileName}
+                        onChange={(e) => setGalleryFileName(e.target.value)}
+                        placeholder="Ex: Cartaz de Promoção de Doces"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                      />
+                    </div>
+
+                    {/* Upload de arquivo */}
+                    <div>
+                      <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1.5">Selecione o Arquivo</label>
+                      <div 
+                        onClick={() => document.getElementById("gallery-upload-input")?.click()}
+                        className="border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-xl p-6 flex flex-col items-center justify-center bg-slate-50 hover:bg-slate-50/50 cursor-pointer transition-all group"
+                      >
+                        <input 
+                          type="file" 
+                          id="gallery-upload-input" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={handleGalleryFileSelect} 
+                        />
+                        {galleryFileBase64 ? (
+                          <div className="w-full relative">
+                            <img src={galleryFileBase64} alt="Preview da Imagem" className="h-32 w-full object-contain rounded bg-slate-950 border border-slate-200" />
+                            <div className="absolute top-2 right-2 bg-slate-950/80 text-white text-[9px] px-1.5 py-0.5 rounded font-mono truncate max-w-[150px]">
+                              Pronto para o Banco
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center">
+                            <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-2 group-hover:scale-105 transition-transform">
+                              <Upload className="w-5 h-5" />
+                            </div>
+                            <h4 className="font-bold text-[11px] text-slate-700">Selecione Imagem</h4>
+                            <p className="text-[9px] text-slate-400 mt-0.5 uppercase tracking-wider">JPG, PNG ou GIF (Máx 12MB)</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Botão de Gravar */}
+                    <button
+                      onClick={handleSaveToGallery}
+                      disabled={!galleryFileBase64 || uploadingToGallery}
+                      className={`w-full py-2.5 font-bold rounded-lg text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${(!galleryFileBase64 || uploadingToGallery) ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700 text-white shadow"}`}
+                    >
+                      {uploadingToGallery ? "Salvando..." : <><Plus className="w-4 h-4" /> Cadastrar no Banco de Dados</>}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 text-slate-300 rounded-xl border border-slate-800 shadow-sm p-4 space-y-3">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                    <Info className="w-4 h-4 text-cyan-400" />
+                    <h4 className="font-bold text-[10px] uppercase tracking-wider text-white">Como Funciona o Banco</h4>
+                  </div>
+                  <ul className="text-[11px] space-y-2 text-slate-400 list-disc list-inside leading-relaxed">
+                    <li>As imagens cadastradas ficam salvas na nuvem com <strong>alta segurança</strong>.</li>
+                    <li>O banco permite transmissão instantânea em 1-clique para qualquer SmartTV.</li>
+                    <li>Não há limite de mídias cadastradas, permitindo preparar campanhas rotativas com antecedência.</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Direita: Galeria de Imagens Sincronizada (8 colunas) */}
+              <div className="xl:col-span-8 bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-5">
+                  <ImageIcon className="w-5 h-5 text-emerald-600" />
+                  <div>
+                    <h3 className="font-bold text-xs uppercase text-slate-800 tracking-wider">Imagens Armazenadas no Banco ({customImages.length})</h3>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-widest leading-none">Sua central organizada de mídias, banners e anúncios permanentes</p>
+                  </div>
+                </div>
+
+                {customImages.length === 0 ? (
+                  <div className="py-16 text-center border-2 border-dashed border-slate-100 rounded-xl bg-slate-50/50">
+                    <ImageIcon className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                    <h4 className="font-bold text-sm text-slate-700">Seu Banco de Dados está Vazio</h4>
+                    <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">Cadastre suas fotos de produtos, anúncios do Canva ou banners de promoções ao lado para começar a controlar as SmartTVs.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {customImages.map((img) => (
+                      <div key={img.id} className="group border border-slate-100 hover:border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow transition-all bg-white flex flex-col justify-between">
+                        {/* Imagem de Capa */}
+                        <div className="relative aspect-video bg-slate-950 overflow-hidden group-hover:scale-[1.01] transition-transform">
+                          <img 
+                            src={img.base64} 
+                            alt={img.name} 
+                            className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity" 
+                          />
+                          <div className="absolute top-2 left-2 bg-slate-900/80 backdrop-blur-sm text-white text-[8px] font-mono px-2 py-0.5 rounded uppercase">
+                            {new Date(img.createdAt).toLocaleDateString("pt-BR")}
+                          </div>
+                        </div>
+
+                        {/* Detalhes e Ações */}
+                        <div className="p-3.5 space-y-3">
+                          <div className="min-h-[38px]">
+                            <h4 className="font-bold text-xs text-slate-800 truncate" title={img.name}>{img.name}</h4>
+                            <p className="text-[9px] text-slate-400 uppercase tracking-wider mt-0.5 font-semibold">Tamanho: Sincronizado</p>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                            <button 
+                              onClick={() => {
+                                setTargetBroadcastingImage(img);
+                                setBroadcastingScreens(screens.map(s => s.id)); // Default: Transmitir para todas
+                              }}
+                              className="px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[9px] rounded uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-1.5"
+                              title="Transmitir para as TVs desejadas"
+                            >
+                              <Megaphone className="w-3 h-3" /> Transmitir
+                            </button>
+                            <button 
+                              onClick={() => {
+                                if (confirm(`Tem certeza que deseja apagar permanentemente a imagem "${img.name}" do banco de dados?`)) {
+                                  handleDeleteFromGallery(img.id, img.name);
+                                }
+                              }}
+                              className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[9px] rounded uppercase tracking-wider transition-all flex items-center justify-center gap-1.5"
+                              title="Remover do Banco de Dados"
+                            >
+                              <Trash2 className="w-3 h-3" /> Excluir
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+
           {/* TAB 4: PASSO A PASSO COMO CONECTAR NO AMAZON FIRE TV */}
           {activeTab === "how-to" && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-md p-6 max-w-4xl mx-auto space-y-6">
@@ -1780,6 +2116,82 @@ function AdminDashboardView() {
             <div className="flex gap-2 justify-end">
               <button onClick={() => setIsDeletingScreen(null)} className="px-3.5 py-1.5 bg-slate-100 font-bold text-xs text-slate-700 rounded-lg">Cancelar</button>
               <button onClick={handleDeleteScreen} className="px-3.5 py-1.5 bg-red-600 font-bold text-xs text-white rounded-lg">Confirmar Remoção</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: TRANSMITIR IMAGEM DO BANCO DE DADOS EM SELEÇÃO ADAPTÁVEL */}
+      {targetBroadcastingImage && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in animate-duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-w-md w-full">
+            <div className="bg-slate-900 p-4 font-bold text-white flex justify-between items-center text-xs uppercase tracking-wider">
+              <div className="flex items-center gap-2">
+                <Megaphone className="w-4 h-4 text-emerald-400" />
+                <span>Transmitir: {targetBroadcastingImage.name}</span>
+              </div>
+              <button onClick={() => setTargetBroadcastingImage(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="aspect-video bg-slate-950 rounded-xl overflow-hidden border border-slate-200 shadow-inner">
+                <img src={targetBroadcastingImage.base64} alt="Preview" className="w-full h-full object-contain" />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-2">Selecione quais TVs devem Exibir esta Mídia</label>
+                <div className="max-h-48 overflow-y-auto space-y-2.5 pr-1">
+                  {screens.map((screen) => {
+                    const isChecked = broadcastingScreens.includes(screen.id);
+                    return (
+                      <label 
+                        key={screen.id} 
+                        className={`flex items-center justify-between p-2.5 rounded-lg border text-xs cursor-pointer transition-all ${isChecked ? "bg-blue-50/50 border-blue-200" : "bg-slate-50 hover:bg-slate-100 border-slate-200/60"}`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <input 
+                            type="checkbox" 
+                            checked={isChecked}
+                            onChange={() => {
+                              if (isChecked) {
+                                setBroadcastingScreens(broadcastingScreens.filter(id => id !== screen.id));
+                              } else {
+                                setBroadcastingScreens([...broadcastingScreens, screen.id]);
+                              }
+                            }}
+                            className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
+                          />
+                          <div>
+                            <span className="font-bold text-slate-800 block text-xs">{screen.name}</span>
+                            <span className="text-[9px] text-slate-400 uppercase tracking-wider">{screen.location}</span>
+                          </div>
+                        </div>
+                        <span className="text-[9px] font-mono px-2 py-0.5 bg-slate-200 text-slate-700 rounded uppercase">
+                          {screen.id}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 px-6 py-4 flex gap-2 justify-end border-t border-slate-100">
+              <button 
+                onClick={() => setTargetBroadcastingImage(null)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg uppercase tracking-wider"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleBroadcastGalleryImage}
+                disabled={broadcastingScreens.length === 0}
+                className={`px-4 py-2 font-bold text-xs rounded-lg uppercase tracking-wider transition-all ${broadcastingScreens.length === 0 ? "bg-slate-300 text-slate-500 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700 text-white shadow-md"}`}
+              >
+                Transmitir Agora
+              </button>
             </div>
           </div>
         </div>
