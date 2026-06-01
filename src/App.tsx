@@ -198,6 +198,48 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
   const [introTimerDone, setIntroTimerDone] = useState(false);
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [currentPlaylistItemIndex, setCurrentPlaylistItemIndex] = useState(0);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
+
+  // Mantém a tela acordada usando a API padrão Screen Wake Lock (suportada pelo Silk Browser / Chrome)
+  useEffect(() => {
+    let wakeLock: any = null;
+
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+          setWakeLockActive(true);
+          console.log("Tela ativa! Wake lock ativado com sucesso para manter a TV ligada.");
+        }
+      } catch (err) {
+        console.warn("Não foi possível ativar o Wake Lock para manter a tela acordada:", err);
+      }
+    }
+
+    requestWakeLock();
+
+    // Re-solicita o Wake Lock caso o usuário alterne de aba/aplicativo e retorne
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible') {
+        await requestWakeLock();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (wakeLock) {
+        wakeLock.release().then(() => {
+          wakeLock = null;
+          setWakeLockActive(false);
+          console.log("Wake Lock liberado.");
+        }).catch((err: any) => {
+          console.warn("Erro ao liberar Wake Lock:", err);
+        });
+      }
+    };
+  }, []);
 
   // Filtra itens habilitados com imagem válida da playlist
   const enabledPlaylist = useMemo(() => {
@@ -358,6 +400,12 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
             <span className="w-2 h-2 bg-blue-500 rounded-full animate-ping" />
             Iniciando transmissão segura...
           </p>
+          {wakeLockActive && (
+            <span className="mt-2 flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[9px] text-emerald-400 font-extrabold uppercase tracking-widest animate-pulse font-sans">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+              Modo Anti-Sleep Ativo
+            </span>
+          )}
         </div>
 
         {/* Barra de progresso elegante de 5 segundos */}
@@ -1236,6 +1284,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     } catch (err) {
       console.error("Erro ao gravar cliente:", err);
       showToast("Erro ao gravar dados do cliente no Firebase.", "error");
+      handleFirestoreError(err, OperationType.WRITE, `clients/${editingClient ? editingClient.id : 'new'}`);
     }
   };
 
@@ -1247,6 +1296,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     } catch (err) {
       console.error("Erro ao excluir cliente:", err);
       showToast("Erro ao remover o cliente e suas chaves do Firebase.", "error");
+      handleFirestoreError(err, OperationType.DELETE, `clients/${id}`);
     }
   };
 
@@ -1264,6 +1314,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     } catch (err) {
       console.error("Erro ao alterar status do cliente no Firebase:", err);
       showToast("Erro ao processar alteração de status do cliente.", "error");
+      handleFirestoreError(err, OperationType.WRITE, `clients/${clientId}/status`);
     }
   };
 
@@ -3226,7 +3277,17 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                   <span>Sincronia Sem Re-fidelidade de IP</span>
                 </div>
                 <p>
-                  O Vitrion Digital Display diferencia-se dos softwares legados porque não precisa de cabos de rede ou que as TVs estejam conectadas no mesmo IP Wifi! Desde que o Amazon Fire TV tenha acesso à internet, você pode fazer as alterações nos preços do cardápio ou subir novas mídias de IA diretamente da sua casa, e as TVs na Padaria atualizarão o catálogo sozinhas via nuvem!
+                  O Vitrion Digital Display diferencia-se dos softwares legados porque não precisa de cabos de rede ou que as TVs estejam conectadas no mesmo IP Wifi! Desde que o Amazon Fire TV tenha acesso à internet, você pode fazer as alterações nos preços do cardápio ou subir novas mídias diretamente da sua casa, e as TVs na Padaria atualizarão o catálogo sozinhas via nuvem!
+                </p>
+              </div>
+
+              <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-950 text-xs leading-relaxed space-y-2">
+                <div className="flex items-center gap-2 font-bold text-emerald-900">
+                  <Sparkles className="w-4 h-4 text-emerald-700" />
+                  <span>Modo Anti-Sleep Integrado (Evitar que a TV Desligue)</span>
+                </div>
+                <p>
+                  O Vitrion conta com suporte nativo à <strong>API Screen Wake Lock</strong>. Quando a TV estiver aberta exibindo as suas mídias ou tabelas, o próprio navegador Silk impede programaticamente que o Fire Stick ou a Smart TV entrem em "Sleep Mode" (modo de repouso) ou atenuem o brilho da tela, garantindo que o seu menu permaneça sempre ativo na vitrine!
                 </p>
               </div>
 

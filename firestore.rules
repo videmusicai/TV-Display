@@ -25,8 +25,8 @@ service cloud.firestore {
 
     // Screens validation helper
     function isValidScreen(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.name is string && data.name.size() <= 200
+      return (data.id == null || (data.id is string && data.id.size() <= 128))
+        && (data.name == null || (data.name is string && data.name.size() <= 200))
         && (data.location == null || (data.location is string && data.location.size() <= 200))
         && (data.currentImage == null || (data.currentImage is string && data.currentImage.size() <= 10485760))
         && (data.lastSync == null || (data.lastSync is string && data.lastSync.size() <= 200))
@@ -42,9 +42,9 @@ service cloud.firestore {
 
     // Products validation helper
     function isValidProduct(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.name is string && data.name.size() <= 200
-        && data.price is number && data.price >= 0
+      return (data.id == null || (data.id is string && data.id.size() <= 128))
+        && (data.name == null || (data.name is string && data.name.size() <= 200))
+        && (data.price == null || (data.price is number && data.price >= 0))
         && (data.category == null || (data.category is string && data.category.size() <= 100))
         && (data.available == null || data.available is bool)
         && (data.clientId == null || (data.clientId is string && data.clientId.size() <= 128));
@@ -52,19 +52,19 @@ service cloud.firestore {
 
     // Custom Images validation helper
     function isValidCustomImage(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.name is string && data.name.size() <= 200
-        && data.base64 is string && data.base64.size() <= 10485760
+      return (data.id == null || (data.id is string && data.id.size() <= 128))
+        && (data.name == null || (data.name is string && data.name.size() <= 200))
+        && (data.base64 == null || (data.base64 is string && data.base64.size() <= 10485760))
         && (data.createdAt == null || (data.createdAt is string && data.createdAt.size() <= 200))
         && (data.clientId == null || (data.clientId is string && data.clientId.size() <= 128));
     }
 
     // Clients validation helper
     function isValidClient(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.name is string && data.name.size() <= 200
-        && data.ownerEmail is string && data.ownerEmail.size() <= 200
-        && data.expirationDate is string && data.expirationDate.size() <= 200
+      return (data.id == null || (data.id is string && data.id.size() <= 128))
+        && (data.name == null || (data.name is string && data.name.size() <= 200))
+        && (data.ownerEmail == null || (data.ownerEmail is string && data.ownerEmail.size() <= 200))
+        && (data.expirationDate == null || (data.expirationDate is string && data.expirationDate.size() <= 200))
         && (data.status == null || (data.status is string && data.status.size() <= 50))
         && (data.createdAt == null || (data.createdAt is string && data.createdAt.size() <= 200))
         && (data.contactPhone == null || (data.contactPhone is string && data.contactPhone.size() <= 50))
