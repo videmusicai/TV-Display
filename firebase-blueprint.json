@@ -30,7 +30,21 @@
         "status": { "type": "string" },
         "overlayPrices": { "type": "boolean" },
         "selectedCategory": { "type": "string" },
-        "clientId": { "type": "string" }
+        "clientId": { "type": "string" },
+        "displayMode": { "type": "string" },
+        "playlist": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "image": { "type": "string" },
+              "duration": { "type": "number" },
+              "enabled": { "type": "boolean" }
+            },
+            "required": ["id", "image", "duration", "enabled"]
+          }
+        }
       },
       "required": ["id", "name"]
     },

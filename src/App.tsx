@@ -47,6 +47,13 @@ import { handleFirestoreError, OperationType } from "./firebaseError";
 import { PRESET_TEMPLATES, MenuTemplate } from "./templates";
 
 // Definindo as Interfaces principais
+interface PlaylistItem {
+  id: string;
+  image: string;
+  duration: number;
+  enabled: boolean;
+}
+
 interface ScreenData {
   id: string;
   name: string;
@@ -58,6 +65,8 @@ interface ScreenData {
   overlayPrices: boolean;
   selectedCategory: string; // categoria para filtrar o overlay
   clientId?: string;
+  displayMode?: "single" | "playlist";
+  playlist?: PlaylistItem[];
 }
 
 interface ProductData {
@@ -152,6 +161,35 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [introTimerDone, setIntroTimerDone] = useState(false);
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
+  const [currentPlaylistItemIndex, setCurrentPlaylistItemIndex] = useState(0);
+
+  // Filtra itens habilitados com imagem válida da playlist
+  const enabledPlaylist = useMemo(() => {
+    if (!screen?.playlist) return [];
+    return screen.playlist.filter((item) => item.enabled && item.image);
+  }, [screen?.playlist]);
+
+  // Carrossel giratório com timings individuais por imagem
+  useEffect(() => {
+    if (enabledPlaylist.length <= 1) {
+      setCurrentPlaylistItemIndex(0);
+      return;
+    }
+
+    if (currentPlaylistItemIndex >= enabledPlaylist.length) {
+      setCurrentPlaylistItemIndex(0);
+      return;
+    }
+
+    const activeItem = enabledPlaylist[currentPlaylistItemIndex];
+    const durationMs = Math.max(3, activeItem?.duration || 10) * 1000;
+
+    const timer = setTimeout(() => {
+      setCurrentPlaylistItemIndex((prevIndex) => (prevIndex + 1) % enabledPlaylist.length);
+    }, durationMs);
+
+    return () => clearTimeout(timer);
+  }, [currentPlaylistItemIndex, enabledPlaylist]);
 
   // Garante pelo menos 5 segundos de exibição do Logo Splash no início da TV
   useEffect(() => {
@@ -332,7 +370,11 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
   );
 
   // Determina se a imagem é um preset ou uma personalizada convertida
-  const presetTemplate = PRESET_TEMPLATES.find(t => t.id === screen?.currentImage);
+  const activeImageToShow = (screen?.displayMode === "playlist" && enabledPlaylist.length > 0)
+    ? (enabledPlaylist[currentPlaylistItemIndex]?.image || "")
+    : (screen?.currentImage || "");
+
+  const presetTemplate = PRESET_TEMPLATES.find(t => t.id === activeImageToShow);
 
   return (
     <div className="w-screen h-screen bg-black overflow-hidden relative flex items-center justify-center font-sans select-none">
@@ -341,14 +383,16 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
       <div className="absolute inset-0 w-full h-full flex items-center justify-center">
         {presetTemplate ? (
           <div 
-            className="w-full h-full"
+            className="w-full h-full animate-fade-in"
+            key={activeImageToShow}
             dangerouslySetInnerHTML={{ __html: presetTemplate.svgMarkup }}
           />
-        ) : screen?.currentImage ? (
+        ) : activeImageToShow ? (
           <img 
-            src={screen.currentImage} 
+            src={activeImageToShow} 
             alt="Fornada Display" 
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover animate-fade-in"
+            key={activeImageToShow}
           />
         ) : (
           <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center text-slate-500">
@@ -1095,6 +1139,8 @@ function AdminDashboardView() {
         selectedCategory: updated.selectedCategory,
         currentImage: updated.currentImage,
         clientId: updated.clientId || getCurrentClientId(),
+        displayMode: updated.displayMode || "single",
+        playlist: updated.playlist || [],
         lastSync: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
       });
       setEditingScreen(null);
@@ -1124,7 +1170,14 @@ function AdminDashboardView() {
         lastSync: "Criada agora",
         overlayPrices: false,
         selectedCategory: "Todas",
-        clientId: currentId
+        clientId: currentId,
+        displayMode: "single",
+        playlist: [
+          { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
+          { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+          { id: "slot-3", image: "", duration: 10, enabled: false },
+          { id: "slot-4", image: "", duration: 10, enabled: false }
+        ]
       });
     } catch (err: unknown) {
       handleFirestoreError(err, OperationType.WRITE, `screens/${nextId}`);
@@ -1190,6 +1243,61 @@ function AdminDashboardView() {
           } catch (err: unknown) {
             console.error("Erro ao fazer upload da imagem:", err);
             showToast("Erro ao salvar imagem na TV. Verifique os limites do Firestore.", "error");
+          }
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePlaylistSlotFileSelect = (e: ChangeEvent<HTMLInputElement>, slotIndex: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 12 * 1024 * 1024) {
+      showToast("Erro: A imagem excede o limite máximo para upload (máx: 12MB).", "error");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1200; // compact dimensions specifically for slot documents
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75); // high compression ratio for playlist item
+          
+          if (editingScreen) {
+            const list = editingScreen.playlist ? [...editingScreen.playlist] : [];
+            while (list.length <= slotIndex) {
+              list.push({ id: `slot-${list.length + 1}`, image: "", duration: 10, enabled: false });
+            }
+            list[slotIndex] = {
+              ...list[slotIndex],
+              image: compressedBase64,
+              enabled: true // auto-enable slot on custom upload
+            };
+            setEditingScreen({ ...editingScreen, playlist: list });
+            showToast(`Imagem carregada no Slot 0${slotIndex + 1}! Clique em sincronizar para salvar.`, "success");
           }
         }
       };
@@ -1462,8 +1570,12 @@ function AdminDashboardView() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {screens.map((sc, index) => {
-                    const presetImg = PRESET_TEMPLATES.find(t => t.id === sc.currentImage);
-                    const isCustomUploaded = sc.currentImage.startsWith("data:");
+                    const activeImage = sc.displayMode === "playlist" && sc.playlist && sc.playlist.find(item => item.enabled && item.image)
+                      ? (sc.playlist.find(item => item.enabled && item.image)?.image || "")
+                      : (sc.currentImage || "");
+
+                    const presetImg = PRESET_TEMPLATES.find(t => t.id === activeImage);
+                    const isCustomUploaded = activeImage.startsWith("data:");
                     const displayUrl = `${window.location.origin}${window.location.pathname}?screen=${sc.id}`;
 
                     return (
@@ -1473,7 +1585,7 @@ function AdminDashboardView() {
                           {presetImg ? (
                             <div className="w-full h-full scale-[0.6] opacity-90 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: presetImg.svgMarkup }} />
                           ) : isCustomUploaded ? (
-                            <img src={sc.currentImage} alt="Preview custom" className="w-full h-full object-cover" />
+                            <img src={activeImage} alt="Preview custom" className="w-full h-full object-cover" />
                           ) : (
                             <div className="text-slate-600 text-[10px] font-mono select-none">Sem Mídia Sincronizada</div>
                           )}
@@ -1496,6 +1608,18 @@ function AdminDashboardView() {
                             <h4 className="text-xs font-bold text-slate-900 mb-1">{sc.name}</h4>
                             
                             <div className="mt-2 space-y-1">
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-slate-500">Modo de Sinal:</span>
+                                <span className={`font-bold uppercase text-[8px] px-1.5 py-0.5 rounded-md ${
+                                  sc.displayMode === "playlist" 
+                                    ? "bg-purple-100 text-purple-700" 
+                                    : "bg-blue-100 text-blue-700"
+                                }`}>
+                                  {sc.displayMode === "playlist" 
+                                    ? `Carrossel (${sc.playlist?.filter(p => p.enabled).length || 0} mídias)` 
+                                    : "Imagem Única"}
+                                </span>
+                              </div>
                               <div className="flex justify-between text-[10px]">
                                 <span className="text-slate-500">Overlay Preços:</span>
                                 <span className={`font-bold ${sc.overlayPrices ? "text-blue-600" : "text-amber-600"}`}>
@@ -2620,26 +2744,199 @@ function AdminDashboardView() {
                 />
               </div>
 
-              {/* Seletor de Mídia Preset Incorporada */}
+              {/* Escolha do Modo de Exibição */}
               <div>
-                <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1">Escolher Template Gráfico Padrão</label>
-                <select 
-                  value={editingScreen.currentImage.startsWith("data:") ? "custom" : editingScreen.currentImage}
-                  onChange={(e) => {
-                    const selVal = e.target.value;
-                    if (selVal !== "custom") {
-                      setEditingScreen({ ...editingScreen, currentImage: selVal });
-                    }
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500/10 font-semibold"
-                >
-                  <option value="chalk-bakery">🥖 Quadro Negro - Pães Artesanais (Rústico)</option>
-                  <option value="pastel-sweet">🍰 Doce Charme - Confeitaria (Blush)</option>
-                  <option value="cozy-coffee">☕ Cafeteria Premium - Bebidas (Stone Dark)</option>
-                  <option value="modern-brunch">🥪 Brunch Moderno - Sanduíches (Teal Minimal)</option>
-                  <option value="custom" disabled>🖼️ Imagem de IA Carregada pelo Usuário</option>
-                </select>
+                <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1.5">Modo de Exibição do Painel</label>
+                <div className="bg-slate-50 p-1 rounded-xl border border-slate-200 flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditingScreen({ ...editingScreen, displayMode: "single" })}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                      (editingScreen.displayMode || "single") === "single"
+                        ? "bg-white text-blue-600 shadow-sm border border-slate-200/50"
+                        : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    📺 Imagem Única
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-mode-playlist"
+                    onClick={() => {
+                      const currentPlaylist = editingScreen.playlist && editingScreen.playlist.length > 0
+                        ? editingScreen.playlist
+                        : [
+                            { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
+                            { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+                            { id: "slot-3", image: "", duration: 10, enabled: false },
+                            { id: "slot-4", image: "", duration: 10, enabled: false }
+                          ];
+                      setEditingScreen({ 
+                        ...editingScreen, 
+                        displayMode: "playlist",
+                        playlist: currentPlaylist 
+                      });
+                    }}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                      editingScreen.displayMode === "playlist"
+                        ? "bg-white text-blue-600 shadow-sm border border-slate-200/50"
+                        : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    🔄 Rotação (Carrossel)
+                  </button>
+                </div>
               </div>
+
+              {/* RENDER MODO SINGLE */}
+              {(editingScreen.displayMode || "single") === "single" ? (
+                <div>
+                  <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1">Escolher Template Gráfico Padrão</label>
+                  <select 
+                    value={editingScreen.currentImage.startsWith("data:") ? "custom" : editingScreen.currentImage}
+                    onChange={(e) => {
+                      const selVal = e.target.value;
+                      if (selVal !== "custom") {
+                        setEditingScreen({ ...editingScreen, currentImage: selVal });
+                      }
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500/10 font-semibold"
+                  >
+                    <option value="chalk-bakery">🥖 Quadro Negro - Pães Artesanais (Rústico)</option>
+                    <option value="pastel-sweet">🍰 Doce Charme - Confeitaria (Blush)</option>
+                    <option value="cozy-coffee">☕ Cafeteria Premium - Bebidas (Stone Dark)</option>
+                    <option value="modern-brunch">🥪 Brunch Moderno - Sanduíches (Teal Minimal)</option>
+                    <option value="custom" disabled>🖼️ Imagem de IA Carregada pelo Usuário</option>
+                  </select>
+                </div>
+              ) : (
+                /* RENDER MODO PLAYLIST (ROTATION CAROUSEL) */
+                <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200 max-h-[350px] overflow-y-auto">
+                  <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Carrossel de Imagens</h4>
+                    <span className="text-[9px] font-bold text-blue-600 px-2 py-0.5 bg-blue-100 rounded-full">Até 4 Mídias</span>
+                  </div>
+                  
+                  {Array.from({ length: 4 }).map((_, idx) => {
+                    const playlist = editingScreen.playlist || [];
+                    const slotItem = playlist[idx] || { id: `slot-${idx + 1}`, image: "", duration: 10, enabled: false };
+                    const isCustomUploaded = slotItem.image.startsWith("data:");
+
+                    const handleUpdateSlot = (updates: Partial<PlaylistItem>) => {
+                      const list = [...playlist];
+                      while (list.length <= idx) {
+                        list.push({ id: `slot-${list.length + 1}`, image: "", duration: 10, enabled: false });
+                      }
+                      list[idx] = { ...list[idx], ...updates };
+                      setEditingScreen({ ...editingScreen, playlist: list });
+                    };
+
+                    return (
+                      <div key={idx} className="flex flex-col gap-2 p-2.5 bg-white rounded-lg border border-slate-200 shadow-sm" id={`playlist-slot-${idx}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          {/* Toggle Switch de Canal Ligado */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <input 
+                              type="checkbox"
+                              checked={slotItem.enabled}
+                              onChange={(e) => handleUpdateSlot({ enabled: e.target.checked })}
+                              className="w-3.5 h-3.5 accent-blue-600 rounded cursor-pointer"
+                              id={`slot-check-${idx}`}
+                            />
+                            <label htmlFor={`slot-check-${idx}`} className="text-[10px] uppercase font-bold text-slate-700 cursor-pointer select-none">
+                              Slot 0{idx + 1}
+                            </label>
+                          </div>
+
+                          {/* Seletor de Imagem (Preset ou Galeria de IA) */}
+                          <div className="flex-1 min-w-0">
+                            <select 
+                              disabled={!slotItem.enabled}
+                              value={isCustomUploaded ? "custom-upload" : slotItem.image}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val !== "custom-upload") {
+                                  handleUpdateSlot({ image: val });
+                                }
+                              }}
+                              className={`w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[11px] outline-none font-semibold ${
+                                !slotItem.enabled ? "opacity-40" : ""
+                              }`}
+                            >
+                              <option value="">🚫 Vazio / Sem Imagem</option>
+                              <optgroup label="Modelos Oficiais do Menu">
+                                <option value="chalk-bakery">🥖 Quadro Negro (Rústico)</option>
+                                <option value="pastel-sweet">🍰 Doce Charme (Blush)</option>
+                                <option value="cozy-coffee">☕ Cafeteria Premium (Stone Dark)</option>
+                                <option value="modern-brunch">🥪 Brunch Moderno (Teal)</option>
+                                <option value="promo-combo">🍔 Combo - Café com Pão de Queijo</option>
+                                <option value="promo-pix">💳 PIX - Chave e QR Code</option>
+                              </optgroup>
+                              {customImages.length > 0 && (
+                                <optgroup label="Sua Galeria Central de IA">
+                                  {customImages.map((img) => (
+                                    <option key={img.id} value={img.base64}>
+                                      🖼️ IA: {img.name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              {isCustomUploaded && (
+                                <option value="custom-upload">📸 Imagem Carregada Manualmente</option>
+                              )}
+                            </select>
+                          </div>
+
+                          {/* Upload manual individual */}
+                          <div className="shrink-0 flex items-center">
+                            <input 
+                              type="file" 
+                              accept="image/*"
+                              disabled={!slotItem.enabled}
+                              onChange={(e) => handlePlaylistSlotFileSelect(e, idx)}
+                              className="hidden" 
+                              id={`playlist-image-uploader-${idx}`}
+                            />
+                            <label 
+                              htmlFor={`playlist-image-uploader-${idx}`}
+                              className={`p-1 px-1.5 border border-slate-200 rounded cursor-pointer bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 ${
+                                !slotItem.enabled ? "opacity-30 pointer-events-none" : ""
+                              }`}
+                              title="Subir foto específica do computador para este slot"
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Tempo manual configurado de exibição */}
+                        {slotItem.enabled && (
+                          <div className="flex items-center gap-2 mt-1 pt-1.5 border-t border-slate-100">
+                            <span className="text-[9px] uppercase font-bold text-slate-400 shrink-0">Tempo</span>
+                            <input 
+                              type="range"
+                              min="3"
+                              max="120"
+                              value={slotItem.duration || 10}
+                              onChange={(e) => handleUpdateSlot({ duration: parseInt(e.target.value) })}
+                              className="flex-1 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                            />
+                            <input 
+                              type="number"
+                              min="3"
+                              max="120"
+                              value={slotItem.duration || 10}
+                              onChange={(e) => handleUpdateSlot({ duration: parseInt(e.target.value) || 10 })}
+                              className="w-12 bg-slate-100 text-slate-700 text-center font-bold font-mono py-0.5 rounded text-[10px] border border-slate-200 outline-none"
+                            />
+                            <span className="text-[9px] text-slate-500 shrink-0 select-none">seg.</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Seletores de Overlay de Preços */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col gap-3">

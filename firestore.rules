@@ -34,7 +34,9 @@ service cloud.firestore {
         && (data.status == null || (data.status is string && data.status.size() <= 20))
         && (data.overlayPrices == null || data.overlayPrices is bool)
         && (data.selectedCategory == null || (data.selectedCategory is string && data.selectedCategory.size() <= 100))
-        && (data.clientId == null || (data.clientId is string && data.clientId.size() <= 128));
+        && (data.clientId == null || (data.clientId is string && data.clientId.size() <= 128))
+        && (data.displayMode == null || (data.displayMode is string && data.displayMode.size() <= 20))
+        && (data.playlist == null || data.playlist is list);
     }
 
     // Products validation helper
