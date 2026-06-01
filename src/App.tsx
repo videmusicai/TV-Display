@@ -22,7 +22,14 @@ import {
   BookOpen, 
   Info, 
   AlertCircle,
-  Megaphone
+  Megaphone,
+  Lock,
+  Users,
+  Calendar,
+  ShieldAlert,
+  CreditCard,
+  UserCheck,
+  Search
 } from "lucide-react";
 import { 
   collection, 
@@ -50,6 +57,7 @@ interface ScreenData {
   lastSync: string;
   overlayPrices: boolean;
   selectedCategory: string; // categoria para filtrar o overlay
+  clientId?: string;
 }
 
 interface ProductData {
@@ -58,6 +66,7 @@ interface ProductData {
   price: number;
   category: string;
   available: boolean;
+  clientId?: string;
 }
 
 interface CustomImageData {
@@ -65,6 +74,7 @@ interface CustomImageData {
   name: string;
   base64: string;
   createdAt: string;
+  clientId?: string;
 }
 
 // Componente de Logo Oficial do Vitrion Digital Display em SVG Vetorial de Alta Resolução
@@ -141,6 +151,7 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [introTimerDone, setIntroTimerDone] = useState(false);
+  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
 
   // Garante pelo menos 5 segundos de exibição do Logo Splash no início da TV
   useEffect(() => {
@@ -155,10 +166,45 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
     setLoading(true);
     const docRef = doc(db, "screens", screenId);
     
+    let unsubscribeClient: (() => void) | null = null;
+
     const unsubscribeScreen = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
-        setScreen({ id: docSnap.id, ...docSnap.data() } as ScreenData);
+        const data = { id: docSnap.id, ...docSnap.data() } as ScreenData;
+        setScreen(data);
         setError(null);
+
+        // Se a tela pertence a um cliente, monitora a assinatura do cliente em tempo real
+        if (data.clientId) {
+          if (unsubscribeClient) {
+            (unsubscribeClient as () => void)();
+          }
+          
+          unsubscribeClient = onSnapshot(doc(db, "clients", data.clientId), (clientSnap) => {
+            if (clientSnap.exists()) {
+              const clientData = clientSnap.data();
+              const today = new Date();
+              today.setHours(0,0,0,0);
+              const expDate = new Date(clientData.expirationDate);
+              expDate.setHours(23,59,59,999);
+              
+              if (clientData.status === "suspended") {
+                setSubscriptionError("Esta transmissão foi suspensa pelo administrador da plataforma.");
+              } else if (today > expDate) {
+                setSubscriptionError(`Esta licença para o ponto de exibição expirou em ${new Date(clientData.expirationDate).toLocaleDateString("pt-BR")}. Por favor, realize o acerto da mensalidade para reestabelecer o sinal.`);
+              } else {
+                setSubscriptionError(null);
+              }
+            } else {
+              // Se o cliente foi removido ou não existe no banco, desliga a TV por segurança
+              setSubscriptionError("O transmissor associado a esta TV não foi localizado no cadastro.");
+            }
+          }, (err) => {
+            console.error("Erro ao verificar termo de assinatura da tela", err);
+          });
+        } else {
+          setSubscriptionError(null);
+        }
       } else {
         setError(`A tela "${screenId}" não foi encontrada no banco do Vitrion Digital Display. Verifique o ID no painel administrador.`);
       }
@@ -183,6 +229,9 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
     return () => {
       unsubscribeScreen();
       unsubscribeProducts();
+      if (unsubscribeClient) {
+        (unsubscribeClient as () => void)();
+      }
     };
   }, [screenId]);
 
@@ -229,6 +278,37 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
             100% { width: 100%; }
           }
         `}} />
+      </div>
+    );
+  }
+
+  if (subscriptionError) {
+    return (
+      <div className="w-screen h-screen bg-slate-950 flex flex-col items-center justify-center text-white font-sans p-8 text-center relative overflow-hidden select-none">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-red-600/10 blur-[100px] rounded-full pointer-events-none" />
+        
+        <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6 text-red-500 relative animate-pulse">
+          <div className="absolute inset-0 bg-red-500/20 rounded-full animate-ping opacity-50" />
+          <Lock className="w-10 h-10 relative z-10" />
+        </div>
+        
+        <h2 className="text-3xl font-black uppercase tracking-wider mb-2 text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-rose-400">
+          Transmissão Indisponível
+        </h2>
+        <p className="text-[10px] text-red-400 uppercase tracking-[0.3em] font-bold mb-4">Aguardando Ativação da Licença</p>
+        
+        <p className="text-slate-300 max-w-sm text-xs leading-relaxed mb-8">
+          {subscriptionError}
+        </p>
+
+        <div className="bg-slate-900 border border-white/5 py-4 px-6 rounded-xl max-w-xs mx-auto">
+          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-semibold">Identificador da TV</p>
+          <p className="text-sm font-mono font-bold text-white tracking-wider mt-1">{screenId}</p>
+        </div>
+        
+        <p className="absolute bottom-8 text-[9px] text-slate-600 uppercase tracking-[0.2em] font-semibold">
+          Vitrion Digital Display SaaS • Painel Administrativo
+        </p>
       </div>
     );
   }
@@ -459,18 +539,148 @@ const PROMPT_PROMO_PRESETS = PROMPT_PROMO_PRESETS_RAW.map(item => ({
 // VIEW 2: PAINEL ADMINISTRATIVO (DASHBOARD)
 // ==========================================
 function AdminDashboardView() {
-  const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "promotions" | "gallery" | "how-to">("screens");
-  const [screens, setScreens] = useState<ScreenData[]>([]);
-  const [products, setProducts] = useState<ProductData[]>([]);
+  const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "promotions" | "gallery" | "how-to" | "clients">("screens");
+  const [rawScreens, setRawScreens] = useState<ScreenData[]>([]);
+  const [rawProducts, setRawProducts] = useState<ProductData[]>([]);
   const [user, setUser] = useState<any>(null);
 
   // Banco de Imagens em Nuvem
-  const [customImages, setCustomImages] = useState<CustomImageData[]>([]);
+  const [rawCustomImages, setRawCustomImages] = useState<CustomImageData[]>([]);
   const [galleryFileBase64, setGalleryFileBase64] = useState<string | null>(null);
   const [galleryFileName, setGalleryFileName] = useState<string>("");
   const [uploadingToGallery, setUploadingToGallery] = useState(false);
   const [targetBroadcastingImage, setTargetBroadcastingImage] = useState<CustomImageData | null>(null);
   const [broadcastingScreens, setBroadcastingScreens] = useState<string[]>([]);
+
+  // SaaS Multi-Client States
+  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string>("all"); // "all" ou ID do cliente específico para o Super Admin
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientEmail, setNewClientEmail] = useState("");
+  const [newClientPhone, setNewClientPhone] = useState("");
+  const [newClientFee, setNewClientFee] = useState("99.90");
+  const [newClientExpiration, setNewClientExpiration] = useState("");
+  const [editingClient, setEditingClient] = useState<any | null>(null);
+  const [clientSearchTerm, setClientSearchTerm] = useState("");
+
+  const isSuperAdmin = user?.email?.toLowerCase() === "videmusicai@gmail.com" || user?.email?.toLowerCase() === "admin@vitrion.com.br";
+
+  const loggedInClient = useMemo(() => {
+    if (!user?.email) return null;
+    return clients.find(c => c.ownerEmail?.toLowerCase() === user.email.toLowerCase());
+  }, [clients, user]);
+
+  const subscriptionStatus = useMemo(() => {
+    if (isSuperAdmin) return { isValid: true, state: "super_admin" };
+    if (!user) return { isValid: true, state: "loading" };
+    if (!loggedInClient) {
+      return { isValid: true, state: "demo", reason: "Sua conta é de demonstração. Entre em contato com o dono do sistema (contato: videmusicai@gmail.com) para obter sua própria credencial com TVs ativas." };
+    }
+    
+    if (loggedInClient.status === "suspended") {
+      return { isValid: false, state: "suspended", reason: "Seu acesso comercial foi suspenso pelo administrador do Vitrion." };
+    }
+    
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const expDate = new Date(loggedInClient.expirationDate);
+    expDate.setHours(23,59,59,999);
+    
+    if (today > expDate) {
+      return { isValid: false, state: "expired", reason: `Sua assinatura mensal de ponto físico expirou em ${expDate.toLocaleDateString("pt-BR")}. Contate o administrador (videmusicai@gmail.com) para regularizar.` };
+    }
+    
+    const diffTime = expDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    if (diffDays <= 5) {
+      return { isValid: true, state: "near_due", daysLeft: diffDays, reason: `Faltam apenas ${diffDays} dias para o vencimento de sua licença (${expDate.toLocaleDateString("pt-BR")}).` };
+    }
+    
+    return { isValid: true, state: "active" };
+  }, [loggedInClient, isSuperAdmin, user]);
+
+  const getCurrentClientId = () => {
+    if (isSuperAdmin) {
+      return selectedClientId === "all" ? "demo_client" : selectedClientId;
+    }
+    return loggedInClient ? loggedInClient.id : "demo_client";
+  };
+
+  const filteredScreens = useMemo(() => {
+    if (isSuperAdmin && selectedClientId === "all") return rawScreens;
+    return rawScreens.filter(s => s.clientId === getCurrentClientId());
+  }, [rawScreens, selectedClientId, isSuperAdmin, loggedInClient, clients]);
+
+  const filteredProducts = useMemo(() => {
+    if (isSuperAdmin && selectedClientId === "all") return rawProducts;
+    return rawProducts.filter(p => p.clientId === getCurrentClientId());
+  }, [rawProducts, selectedClientId, isSuperAdmin, loggedInClient, clients]);
+
+  const filteredCustomImages = useMemo(() => {
+    if (isSuperAdmin && selectedClientId === "all") return rawCustomImages;
+    return rawCustomImages.filter(img => img.clientId === getCurrentClientId());
+  }, [rawCustomImages, selectedClientId, isSuperAdmin, loggedInClient, clients]);
+
+  // Declaração de compatibilidade transparente
+  const screens = filteredScreens;
+  const products = filteredProducts;
+  const customImages = filteredCustomImages;
+
+  // Funções de Gestão de Clientes SaaS
+  const handleSaveClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClientName || !newClientEmail || !newClientExpiration) {
+      showToast("Por favor, preencha o nome da loja, email do cliente e data de vencimento.", "error");
+      return;
+    }
+    try {
+      const cId = editingClient ? editingClient.id : `client_${Date.now()}`;
+      const payload = {
+        id: cId,
+        name: newClientName.trim(),
+        ownerEmail: newClientEmail.trim().toLowerCase(),
+        phone: newClientPhone.trim(),
+        monthlyFee: parseFloat(newClientFee) || 0,
+        expirationDate: newClientExpiration,
+        status: editingClient ? editingClient.status : "active"
+      };
+      await setDoc(doc(db, "clients", cId), payload);
+      showToast(`Cliente "${newClientName}" salvo com sucesso!`, "success");
+      setNewClientName("");
+      setNewClientEmail("");
+      setNewClientPhone("");
+      setNewClientFee("99.90");
+      setNewClientExpiration("");
+      setEditingClient(null);
+    } catch (err) {
+      console.error("Erro ao gravar cliente:", err);
+      showToast("Erro ao gravar dados do cliente no Firebase.", "error");
+    }
+  };
+
+  const handleDeleteClient = async (id: string, name: string) => {
+    if (!window.confirm(`Deseja realmente apagar o cliente "${name}"? Todas as TVs sintonizadas a ele perderão o sinal.`)) return;
+    try {
+      await deleteDoc(doc(db, "clients", id));
+      showToast(`Cliente "${name}" excluído do sistema.`, "success");
+    } catch (err) {
+      console.error("Erro ao excluir cliente:", err);
+      showToast("Erro ao remover cliente.", "error");
+    }
+  };
+
+  const toggleClientStatus = async (client: any) => {
+    const nextStatus = client.status === "active" ? "suspended" : "active";
+    try {
+      await updateDoc(doc(db, "clients", client.id), {
+        status: nextStatus
+      });
+      showToast(`Cliente "${client.name}" está agora ${nextStatus === "active" ? "Ativo" : "Suspenso"}!`, "success");
+    } catch (err) {
+      console.error("Erro ao alterar status:", err);
+      showToast("Erro ao alterar status do cliente.", "error");
+    }
+  };
 
   // Estados para Promoções Customizadas e Envios Manuais
   const [promoFileBase64, setPromoFileBase64] = useState<string | null>(null);
@@ -598,6 +808,10 @@ function AdminDashboardView() {
 
   // Salvar imagem customizada no Banco de Dados Firestore
   const handleSaveToGallery = async () => {
+    if (!subscriptionStatus.isValid) {
+      showToast("Não é possível salvar imagens no banco: Sua assinatura está vencida ou suspensa.", "error");
+      return;
+    }
     if (!galleryFileBase64) {
       showToast("Selecione uma imagem promocional ou cartaz primeiro.", "info");
       return;
@@ -612,7 +826,8 @@ function AdminDashboardView() {
         id: newId,
         name: imgName,
         base64: galleryFileBase64,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        clientId: getCurrentClientId()
       });
 
       showToast(`Imagem "${imgName}" salva com sucesso no Banco de Dados Central!`, "success");
@@ -725,8 +940,19 @@ function AdminDashboardView() {
     return unsubscribe;
   }, []);
 
-  // 2. Carrega Dados do Firestore em Tempo Real
+  // 2. Carrega Dados do Firestore em Tempo Real (Sistemas Administrativos Multi-Client)
   useEffect(() => {
+    const unsubscribeClients = onSnapshot(collection(db, "clients"), (snapshot) => {
+      const clientItems: any[] = [];
+      snapshot.forEach((doc) => {
+        clientItems.push({ id: doc.id, ...doc.data() });
+      });
+      clientItems.sort((a, b) => a.name.localeCompare(b.name));
+      setClients(clientItems);
+    }, (error) => {
+      console.warn("Dificuldade ao carregar clientes do banco", error);
+    });
+
     const unsubscribeScreens = onSnapshot(collection(db, "screens"), (snapshot) => {
       const screenItems: ScreenData[] = [];
       snapshot.forEach((doc) => {
@@ -734,7 +960,7 @@ function AdminDashboardView() {
       });
       // Ordena por id
       screenItems.sort((a, b) => a.id.localeCompare(b.id));
-      setScreens(screenItems);
+      setRawScreens(screenItems);
     }, (error) => {
       console.error("Erro na escuta das telas", error);
     });
@@ -744,7 +970,7 @@ function AdminDashboardView() {
       snapshot.forEach((doc) => {
         productItems.push({ id: doc.id, ...doc.data() } as ProductData);
       });
-      setProducts(productItems);
+      setRawProducts(productItems);
     }, (error) => {
       console.error("Erro na escuta dos produtos", error);
     });
@@ -755,12 +981,13 @@ function AdminDashboardView() {
         imageItems.push({ id: doc.id, ...doc.data() } as CustomImageData);
       });
       imageItems.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      setCustomImages(imageItems);
+      setRawCustomImages(imageItems);
     }, (error) => {
       console.error("Erro na escuta das imagens customizadas", error);
     });
 
     return () => {
+      unsubscribeClients();
       unsubscribeScreens();
       unsubscribeProducts();
       unsubscribeCustomImages();
@@ -818,14 +1045,20 @@ function AdminDashboardView() {
     e.preventDefault();
     if (!newProdName || !newProdPrice) return;
     
+    if (!subscriptionStatus.isValid) {
+      showToast("Não é possível salvar produtos: Sua assinatura está bloqueada ou vencida. Ative sua mensalidade.", "error");
+      return;
+    }
+
     try {
       const pId = editingProduct ? editingProduct.id : `prod_${Date.now()}`;
-      const payload: ProductData = {
+      const payload: any = {
         id: pId,
         name: newProdName,
         price: parseFloat(parseFloat(newProdPrice.replace(",", ".")).toFixed(2)),
         category: newProdCategory,
-        available: editingProduct ? editingProduct.available : true
+        available: editingProduct ? editingProduct.available : true,
+        clientId: getCurrentClientId()
       };
 
       await setDoc(doc(db, "products", pId), payload);
@@ -850,6 +1083,10 @@ function AdminDashboardView() {
 
   // 5. ATUALIZA CONFIGURAÇÃO DE UMA TELA (E.G. OVERLAY OU PRESET)
   const handleUpdateScreenConfig = async (updated: ScreenData) => {
+    if (!subscriptionStatus.isValid) {
+      showToast("Não é possível alterar as TVs: Sua assinatura está vencida ou bloqueada.", "error");
+      return;
+    }
     try {
       await updateDoc(doc(db, "screens", updated.id), {
         name: updated.name,
@@ -857,6 +1094,7 @@ function AdminDashboardView() {
         overlayPrices: updated.overlayPrices,
         selectedCategory: updated.selectedCategory,
         currentImage: updated.currentImage,
+        clientId: updated.clientId || getCurrentClientId(),
         lastSync: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
       });
       setEditingScreen(null);
@@ -867,8 +1105,14 @@ function AdminDashboardView() {
 
   // Adiciona nova TV se desejar (até 10 ou ilimitado)
   const handleAddNewScreen = async () => {
-    const nextId = `tela-${screens.length + 1}`;
-    const name = `SmartTV 0${screens.length + 1}`;
+    if (!subscriptionStatus.isValid) {
+      showToast("Não é possível adicionar TVs: Sua assinatura está vencida ou bloqueada.", "error");
+      return;
+    }
+    const currentId = getCurrentClientId();
+    const count = rawScreens.filter(s => s.clientId === currentId).length;
+    const nextId = `tela-${currentId}-${Date.now()}`;
+    const name = `SmartTV 0${count + 1}`;
     try {
       await setDoc(doc(db, "screens", nextId), {
         id: nextId,
@@ -879,7 +1123,8 @@ function AdminDashboardView() {
         aspectRatio: "16:9",
         lastSync: "Criada agora",
         overlayPrices: false,
-        selectedCategory: "Todas"
+        selectedCategory: "Todas",
+        clientId: currentId
       });
     } catch (err: unknown) {
       handleFirestoreError(err, OperationType.WRITE, `screens/${nextId}`);
@@ -898,6 +1143,10 @@ function AdminDashboardView() {
 
   // 6. TRATAMENTO SENSACIONAL DE ARQUIVO PARA BASE64 COM COMPRESSÃO INTELIGENTE
   const handleUploadImageFile = (e: ChangeEvent<HTMLInputElement>, screenId: string) => {
+    if (!subscriptionStatus.isValid) {
+      showToast("Não é possível enviar imagens: Sua assinatura está vencida ou suspensa.", "error");
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -1050,6 +1299,17 @@ function AdminDashboardView() {
             <BookOpen className="w-4 h-4" />
             Conectar no Fire TV
           </button>
+          
+          {isSuperAdmin && (
+            <button 
+              onClick={() => setActiveTab("clients")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "clients" ? "bg-amber-600 text-white" : "hover:bg-slate-800 text-amber-500/85 hover:text-amber-400"}`}
+              id="tab-clients"
+            >
+              <Users className="w-4 h-4 text-amber-400" />
+              SaaS: Clientes ({clients.length})
+            </button>
+          )}
         </nav>
 
         {/* Rodapé do Perfil Admin */}
@@ -1059,8 +1319,12 @@ function AdminDashboardView() {
               {auth.currentUser?.isAnonymous ? "TS" : auth.currentUser?.email?.slice(0, 2) || "ADM"}
             </div>
             <div className="flex-1 overflow-hidden">
-              <p className="text-white text-xs font-bold truncate">Padaria Cozinha Central</p>
-              <p className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">Acesso Master</p>
+              <p className="text-white text-xs font-bold truncate">
+                {loggedInClient ? loggedInClient.name : (isSuperAdmin ? "Super Admin" : "Loja de Teste")}
+              </p>
+              <p className="text-slate-400 text-[9px] uppercase font-bold tracking-wider truncate">
+                {isSuperAdmin ? "Provedor Master" : (loggedInClient ? `Venc: ${new Date(loggedInClient.expirationDate).toLocaleDateString("pt-BR")}` : "Sem Assinatura")}
+              </p>
             </div>
           </div>
           <button 
@@ -1085,6 +1349,7 @@ function AdminDashboardView() {
               {activeTab === "gallery" && "Banco de Imagens & Galeria Central"}
               {activeTab === "assets" && "Biblioteca de Imagens de Inteligência Artificial"}
               {activeTab === "how-to" && "Como Conectar o Amazon Fire TV"}
+              {activeTab === "clients" && "👥 Controlar Contas & Vendas de Clientes"}
             </h2>
             <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded uppercase flex items-center gap-1">
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
@@ -1093,6 +1358,23 @@ function AdminDashboardView() {
           </div>
           
           <div className="flex items-center gap-3">
+            {isSuperAdmin && (
+              <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg">
+                <span className="text-[10px] font-bold text-amber-700 uppercase">Filtrar Cliente:</span>
+                <select 
+                  value={selectedClientId} 
+                  onChange={(e) => setSelectedClientId(e.target.value)}
+                  className="bg-white text-xs border border-amber-200 outline-none rounded p-1 font-semibold text-slate-700 font-sans"
+                >
+                  <option value="all">Ver Todos os Clientes</option>
+                  <option value="demo_client">Conta de Demonstração (Demo)</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name} ({c.ownerEmail})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Input oculto para carregar Base64 de imagem */}
             <input 
               type="file" 
@@ -1111,6 +1393,35 @@ function AdminDashboardView() {
             </div>
           </div>
         </header>
+
+        {/* Banner de Status de Assinatura do SaaS */}
+        {subscriptionStatus.state !== "super_admin" && (
+          <div className={`px-6 py-2 flex items-center justify-between text-xs font-semibold shrink-0 select-none border-b ${
+            subscriptionStatus.isValid 
+              ? (subscriptionStatus.state === "near_due" ? "bg-amber-100 text-amber-800 border-amber-200 animate-pulse" : "bg-blue-50 text-blue-700 border-blue-100") 
+              : "bg-red-100 text-red-800 border-red-200"
+          }`}>
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 shrink-0" />
+              <span>
+                {subscriptionStatus.isValid 
+                  ? (subscriptionStatus.state === "near_due" ? subscriptionStatus.reason : (subscriptionStatus.state === "demo" ? subscriptionStatus.reason : `Licença ativa para: ${loggedInClient?.name || "Sem Nome"} (Vencimento em: ${new Date(loggedInClient?.expirationDate).toLocaleDateString("pt-BR")})`))
+                  : subscriptionStatus.reason
+                }
+              </span>
+            </div>
+            {subscriptionStatus.state === "demo" && (
+              <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded uppercase">
+                Período Livre para Testes
+              </span>
+            )}
+            {!subscriptionStatus.isValid && (
+              <span className="px-2.5 py-0.5 bg-red-600 text-white rounded text-[10px] uppercase font-bold animate-pulse">
+                Sinal Físico Bloqueado
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Zona de Rolagem de Conteúdo */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
@@ -1974,6 +2285,282 @@ function AdminDashboardView() {
                     );
                   })}
                 </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* TAB 5: GESTÃO MULTI-CLIENTE E ASSINATURAS SAAS */}
+          {activeTab === "clients" && isSuperAdmin && (
+            <div className="space-y-6">
+              
+              {/* Painel de Indicadores de Vendas e Negócio */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                  <div className="p-3 bg-blue-100 text-blue-700 rounded-lg">
+                    <Users className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Total de Clientes</p>
+                    <p className="text-xl font-bold text-slate-800">{clients.length}</p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                  <div className="p-3 bg-emerald-100 text-emerald-700 rounded-lg">
+                    <CreditCard className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Mensalidade Recorrente (MRR)</p>
+                    <p className="text-xl font-bold text-slate-800">
+                      R$ {clients.reduce((acc, c) => acc + (c.monthlyFee || 0), 0).toFixed(2).replace(".", ",")}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                  <div className="p-3 bg-amber-100 text-amber-700 rounded-lg">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Mensalidades Expiradas</p>
+                    <p className="text-xl font-bold text-slate-800">
+                      {clients.filter(c => {
+                        const exp = new Date(c.expirationDate);
+                        exp.setHours(23,59,59,999);
+                        return new Date() > exp;
+                      }).length}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                  <div className="p-3 bg-rose-100 text-rose-700 rounded-lg">
+                    <UserCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Contas Suspensas</p>
+                    <p className="text-xl font-bold text-slate-800">
+                      {clients.filter(c => c.status === "suspended").length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Corpo Principal da Gestão de Clientes */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                {/* Lado Esquerdo: Lista de Clientes Ativos/Inativos */}
+                <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                  <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-col sm:flex-row justify-between items-center gap-3">
+                    <h3 className="font-bold text-xs uppercase text-slate-700">Portfólio de Assinantes</h3>
+                    
+                    {/* Barra de Busca de Clientes */}
+                    <div className="relative w-full sm:w-64">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                      <input 
+                        type="text"
+                        placeholder="Buscar por Loja ou Email..."
+                        value={clientSearchTerm}
+                        onChange={(e) => setClientSearchTerm(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg pl-9 pr-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/10 font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Tabela de Clientes */}
+                  <div className="overflow-x-auto flex-1">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                          <th className="p-3.5">Nome do Cliente / Loja</th>
+                          <th className="p-3.5">Email de Acesso</th>
+                          <th className="p-3.5 text-center">Mensalidade</th>
+                          <th className="p-3.5 text-center">Vencimento</th>
+                          <th className="p-3.5 text-center">Status</th>
+                          <th className="p-3.5 text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium">
+                        {clients
+                          .filter(c => 
+                            c.name.toLowerCase().includes(clientSearchTerm.toLowerCase()) || 
+                            c.ownerEmail.toLowerCase().includes(clientSearchTerm.toLowerCase())
+                          )
+                          .map((client) => {
+                            const expDate = new Date(client.expirationDate);
+                            expDate.setHours(23,59,59,999);
+                            const isExpired = new Date() > expDate;
+                            const isSuspended = client.status === "suspended";
+                            return (
+                              <tr key={client.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="p-3.5">
+                                  <div className="font-bold text-slate-800">{client.name}</div>
+                                  <div className="text-[10px] text-slate-400 font-mono">{client.phone || "Sem Telefone"}</div>
+                                </td>
+                                <td className="p-3.5 text-slate-600 font-mono text-[11px]">{client.ownerEmail}</td>
+                                <td className="p-3.5 text-center font-bold text-slate-700">R$ {client.monthlyFee?.toFixed(2).replace(".", ",")}</td>
+                                <td className="p-3.5 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    isExpired 
+                                      ? "bg-red-100 text-red-800" 
+                                      : "bg-emerald-100 text-emerald-800"
+                                  }`}>
+                                    {new Date(client.expirationDate).toLocaleDateString("pt-BR")}
+                                  </span>
+                                </td>
+                                <td className="p-3.5 text-center">
+                                  <button
+                                    onClick={() => toggleClientStatus(client)}
+                                    title="Clique para Ativar ou Suspender"
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase transition-all ${
+                                      isSuspended
+                                        ? "bg-red-100 text-red-800 hover:bg-red-200"
+                                        : "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                                    }`}
+                                  >
+                                    {isSuspended ? "● Suspenso" : "● Ativo"}
+                                  </button>
+                                </td>
+                                <td className="p-3.5 text-right whitespace-nowrap">
+                                  <div className="flex justify-end gap-1.5">
+                                    <button
+                                      onClick={() => {
+                                        setEditingClient(client);
+                                        setNewClientName(client.name);
+                                        setNewClientEmail(client.ownerEmail);
+                                        setNewClientPhone(client.phone || "");
+                                        setNewClientFee(String(client.monthlyFee || "99.90"));
+                                        setNewClientExpiration(client.expirationDate);
+                                      }}
+                                      className="p-1 px-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 rounded transition-all"
+                                      title="Editar Informações"
+                                    >
+                                      Editar
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteClient(client.id, client.name)}
+                                      className="p-1 px-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent rounded transition-all"
+                                      title="Excluir do Sistema"
+                                    >
+                                      Excluir
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        {clients.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="text-center p-8 text-slate-400">
+                              Nenhum cliente cadastrado ainda. Use o formulário lateral para cadastrar sua primeira venda!
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Lado Direito: Formulário de Adicionar / Editar */}
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-fit space-y-4">
+                  <div className="border-b border-slate-100 pb-2">
+                    <h3 className="font-bold text-xs uppercase tracking-wide text-slate-700">
+                      {editingClient ? "📝 Atualizar Registro" : "➕ Novo Cliente SaaS"}
+                    </h3>
+                    <p className="text-[10px] text-slate-400">Configure as credenciais e data de cobrança mensal.</p>
+                  </div>
+
+                  <form onSubmit={handleSaveClient} className="space-y-3 text-xs font-semibold">
+                    <div>
+                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Nome Fantasia (Loja / Estabelecimento)</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="Ex: Padaria Bella Vista"
+                        value={newClientName}
+                        onChange={(e) => setNewClientName(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-sans"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Email Principal do Cliente</label>
+                      <input 
+                        type="email" 
+                        required
+                        placeholder="Ex: contato@bellavista.com.br"
+                        value={newClientEmail}
+                        onChange={(e) => setNewClientEmail(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono"
+                      />
+                      <p className="text-[9px] text-slate-400 mt-1 font-sans">Este email vincula a TV do cliente à sua conta para garantir segurança.</p>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Telefone / WhatsApp</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ex: (11) 99888-7766"
+                        value={newClientPhone}
+                        onChange={(e) => setNewClientPhone(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono font-sans"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 font-sans">
+                      <div>
+                        <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Mensalidade (R$)</label>
+                        <input 
+                          type="number" 
+                          step="0.01"
+                          required
+                          placeholder="99.90"
+                          value={newClientFee}
+                          onChange={(e) => setNewClientFee(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono font-bold"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Próximo Vencimento</label>
+                        <input 
+                          type="date" 
+                          required
+                          value={newClientExpiration}
+                          onChange={(e) => setNewClientExpiration(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 pt-2 font-sans">
+                      <button
+                        type="submit"
+                        className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 font-bold text-white text-xs uppercase tracking-wider rounded-lg shadow transition-all"
+                      >
+                        {editingClient ? "Confirmar Edição" : "Registrar Cliente"}
+                      </button>
+                      {editingClient && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingClient(null);
+                            setNewClientName("");
+                            setNewClientEmail("");
+                            setNewClientPhone("");
+                            setNewClientFee("99.90");
+                            setNewClientExpiration("");
+                          }}
+                          className="px-3 py-2 bg-slate-100 hover:bg-slate-200 font-bold text-slate-600 text-xs uppercase border border-slate-300 rounded-lg transition-all"
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </div>
+
               </div>
 
             </div>

@@ -1,5 +1,21 @@
 {
   "entities": {
+    "Client": {
+      "title": "Client",
+      "description": "Represents a tenant or merchant client subscribing to the display system",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "expirationDate": { "type": "string" },
+        "monthlyFee": { "type": "number" },
+        "status": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "ownerEmail", "expirationDate"]
+    },
     "Screen": {
       "title": "Screen",
       "description": "Represents a physical TV screen display configuration",
@@ -13,7 +29,8 @@
         "aspectRatio": { "type": "string" },
         "status": { "type": "string" },
         "overlayPrices": { "type": "boolean" },
-        "selectedCategory": { "type": "string" }
+        "selectedCategory": { "type": "string" },
+        "clientId": { "type": "string" }
       },
       "required": ["id", "name"]
     },
@@ -26,7 +43,8 @@
         "name": { "type": "string" },
         "price": { "type": "number" },
         "category": { "type": "string" },
-        "available": { "type": "boolean" }
+        "available": { "type": "boolean" },
+        "clientId": { "type": "string" }
       },
       "required": ["id", "name", "price"]
     },
@@ -38,12 +56,17 @@
         "id": { "type": "string" },
         "name": { "type": "string" },
         "base64": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "clientId": { "type": "string" }
       },
       "required": ["id", "name", "base64"]
     }
   },
   "firestore": {
+    "clients/{clientId}": {
+      "schema": "Client",
+      "description": "Collection of clients subscribing to the platform"
+    },
     "screens/{screenId}": {
       "schema": "Screen",
       "description": "Collection of screens and their active media assets"
