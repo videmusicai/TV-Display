@@ -41,7 +41,7 @@ import {
   deleteDoc, 
   writeBatch 
 } from "firebase/firestore";
-import { signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { handleFirestoreError, OperationType } from "./firebaseError";
 import { PRESET_TEMPLATES, MenuTemplate } from "./templates";
@@ -588,6 +588,121 @@ function AdminDashboardView() {
   const [rawProducts, setRawProducts] = useState<ProductData[]>([]);
   const [user, setUser] = useState<any>(null);
 
+  // Estados dos Formulários de Autenticação (Login e Registro SaaS)
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authStoreName, setAuthStoreName] = useState("");
+  const [authPhone, setAuthPhone] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
+  const handleAnonymousLogin = async () => {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const cred = await signInAnonymously(auth);
+      if (cred.user) {
+        setUser(cred.user);
+        showToast("Conectado em modo de demonstração!", "success");
+      }
+    } catch (err: any) {
+      console.warn("Autenticação anônima do Firebase indisponível ou restrita. Usando sessão de testes local.", err);
+      setUser({
+        uid: "admin_local",
+        isAnonymous: true,
+        email: "admin@vitrion.com.br",
+        emailVerified: true
+      });
+      showToast("Conectado com usuário administrativo local.", "success");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleAuthSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+
+    try {
+      if (authMode === "login") {
+        // Sign in with Firebase Auth
+        const cred = await signInWithEmailAndPassword(auth, authEmail, authPassword);
+        if (cred.user) {
+          setUser(cred.user);
+          showToast(`Painel Vitrion acessado com sucesso!`, "success");
+        }
+      } else {
+        // Sign up and create new customer account
+        if (!authStoreName.trim()) {
+          setAuthError("Por favor, preencha o Nome do Estabelecimento.");
+          setAuthLoading(false);
+          return;
+        }
+
+        const cred = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+        if (cred.user) {
+          // Logged in user!
+          // Now create their SaaS client record in database
+          const cliId = `client_${cred.user.uid}`;
+          const expiry = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 15 dias de teste grátis!
+          
+          await setDoc(doc(db, "clients", cliId), {
+            id: cliId,
+            name: authStoreName,
+            ownerEmail: authEmail.toLowerCase(),
+            phone: authPhone || "",
+            contactPhone: authPhone || "",
+            monthlyFee: 99.90,
+            expirationDate: expiry,
+            status: "active",
+            createdAt: new Date().toISOString()
+          });
+
+          // Also create a default screen for them so they can immediately see it!
+          await setDoc(doc(db, "screens", `tv_${cred.user.uid}`), {
+            id: `tv_${cred.user.uid}`,
+            name: "TV Recepção - Principal",
+            location: authStoreName,
+            aspectRatio: "16:9",
+            status: "online",
+            currentImage: "chalk-bakery",
+            lastSync: "Criada agora",
+            overlayPrices: false,
+            selectedCategory: "Todas",
+            clientId: cliId,
+            displayMode: "single",
+            playlist: [
+              { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
+              { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+              { id: "slot-3", image: "", duration: 10, enabled: false },
+              { id: "slot-4", image: "", duration: 10, enabled: false }
+            ]
+          });
+
+          setUser(cred.user);
+          showToast(`Sua conta e TV foram registradas com sucesso!`, "success");
+        }
+      }
+    } catch (err: any) {
+      console.error("Auth error", err);
+      let BrazilianErrorMessage = "Ocorreu um erro ao processar. Verifique suas credenciais.";
+      if (err.code === "auth/email-already-in-use") {
+        BrazilianErrorMessage = "Este e-mail já está sendo utilizado por outra conta.";
+      } else if (err.code === "auth/invalid-email") {
+        BrazilianErrorMessage = "Formato de e-mail inválido.";
+      } else if (err.code === "auth/weak-password") {
+        BrazilianErrorMessage = "A senha deve ter no mínimo 6 caracteres.";
+      } else if (err.code === "auth/wrong-password" || err.code === "auth/user-not-found" || err.code === "auth/invalid-credential") {
+        BrazilianErrorMessage = "E-mail ou senha incorretos.";
+      }
+      setAuthError(BrazilianErrorMessage);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   // Banco de Imagens em Nuvem
   const [rawCustomImages, setRawCustomImages] = useState<CustomImageData[]>([]);
   const [galleryFileBase64, setGalleryFileBase64] = useState<string | null>(null);
@@ -963,22 +1078,7 @@ function AdminDashboardView() {
       if (currentUser) {
         setUser(currentUser);
       } else {
-        // Loga de forma anônima e transparente como administrador de testes para imediata usabilidade
-        signInAnonymously(auth)
-          .then((cred) => {
-            if (cred.user) {
-              setUser(cred.user);
-            }
-          })
-          .catch((err) => {
-            console.warn("Autenticação anônima do Firebase indisponível ou restrita. Usando sessão administrativa local padrão.", err);
-            setUser({
-              uid: "admin_local",
-              isAnonymous: true,
-              email: "admin@vitrion.com.br",
-              emailVerified: true
-            });
-          });
+        setUser(null);
       }
     });
     return unsubscribe;
@@ -1337,6 +1437,187 @@ function AdminDashboardView() {
   const onlineCount = screens.length; 
   const totalProducts = products.length;
 
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-sans relative p-4 overflow-hidden">
+        {/* Elementos de Brilho de Fundo */}
+        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-orange-600/10 rounded-full blur-[120px] pointer-events-none" />
+
+        <div className="w-full max-w-md bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl p-8 relative z-10 transition-all duration-300">
+          <div className="flex flex-col items-center mb-8">
+            <VitrionLogo className="w-14 h-14 mb-4 filter drop-shadow-[0_4px_12px_rgba(56,189,248,0.2)]" />
+            <h2 className="text-2xl font-black text-white tracking-tight uppercase">Vitrion</h2>
+            <p className="text-slate-400 text-xs text-center font-semibold tracking-wider uppercase mt-1">Sua Vitrine Digital Inteligente</p>
+          </div>
+
+          {/* Seletor de Tabs */}
+          <div className="flex bg-slate-950/60 p-1 rounded-xl border border-slate-800/80 mb-6 font-semibold select-none">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode("login");
+                setAuthError("");
+              }}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer ${
+                authMode === "login"
+                  ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Conectar
+            </button>
+            <button
+              type="button"
+              id="tab-auth-signup"
+              onClick={() => {
+                setAuthMode("signup");
+                setAuthError("");
+              }}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer ${
+                authMode === "signup"
+                  ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Criar Conta
+            </button>
+          </div>
+
+          {authError && (
+            <div className="mb-4 bg-red-500/10 border border-red-500/30 text-red-200 p-3 rounded-xl flex items-start gap-2.5 text-xs animate-pulse">
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+              <div className="font-semibold">{authError}</div>
+            </div>
+          )}
+
+          <form onSubmit={handleAuthSubmit} className="space-y-4">
+            {authMode === "signup" && (
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Nome do Estabelecimento / Loja</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                    <Utensils className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={authStoreName}
+                    onChange={(e) => setAuthStoreName(e.target.value)}
+                    placeholder="ex: Padaria Colonial, Cafeteria do Bairro"
+                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">E-mail de Acesso</label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                  <UserCheck className="w-4 h-4" />
+                </span>
+                <input
+                  type="email"
+                  required
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="ex: contato@suapadaria.com"
+                  className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Senha Secreta</label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                  <Lock className="w-4 h-4" />
+                </span>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="Mínimo de 6 caracteres"
+                  className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                />
+              </div>
+            </div>
+
+            {authMode === "signup" && (
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">WhatsApp / Telefone (Opcional)</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                    <Megaphone className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    value={authPhone}
+                    onChange={(e) => setAuthPhone(e.target.value)}
+                    placeholder="ex: (11) 99999-9999"
+                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                  />
+                </div>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-blue-600/10 flex items-center justify-center gap-2 mt-4 cursor-pointer"
+            >
+              {authLoading ? (
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  {authMode === "login" ? "Acessar Meu Painel" : "Criar Meu Acesso SaaS"}
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Credenciais Rápidas de Teste */}
+          {authMode === "login" && (
+            <div className="mt-6 border-t border-slate-800/60 pt-5 space-y-3">
+              <p className="text-[9px] uppercase font-bold text-slate-500 tracking-wider text-center">Acesso Rápido ou de Demonstração</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthEmail("admin@vitrion.com.br");
+                    setAuthPassword("admin123");
+                  }}
+                  className="p-2.5 bg-slate-950/40 border border-slate-800 hover:border-slate-700 hover:bg-slate-950 rounded-lg text-left transition-all cursor-pointer"
+                >
+                  <span className="text-[10px] font-bold text-white block">Preencher Padrão</span>
+                  <span className="text-[8px] text-slate-500 font-mono block">admin@vitrion...</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAnonymousLogin}
+                  className="p-2.5 bg-slate-950/40 border border-slate-800 hover:border-slate-700 hover:bg-slate-950 rounded-lg text-left transition-all flex flex-col justify-center cursor-pointer"
+                >
+                  <span className="text-[10px] font-bold text-amber-500 block">Modo Demonstração</span>
+                  <span className="text-[8px] text-slate-400 font-mono block">Testar sem login</span>
+                </button>
+              </div>
+            </div>
+          )}
+          
+          <div className="mt-6 text-center border-t border-slate-800/40 pt-4">
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              O Vitrion utiliza um ecossistema com autenticação integrada ao Firebase Firestore para controle total e segurança absoluta das suas TVs.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-full overflow-hidden font-sans text-slate-800 bg-slate-50">
       
@@ -1437,9 +1718,21 @@ function AdminDashboardView() {
           </div>
           <button 
             onClick={handleInitializeDefaults}
-            className="w-full mt-3 py-1.5 px-3 bg-slate-800 hover:bg-red-950 text-red-300 border border-red-900/30 rounded text-[10px] uppercase tracking-wider font-bold transition-all"
+            className="w-full mt-3 py-1.5 px-3 bg-slate-800 hover:bg-red-950 text-red-300 border border-red-900/30 rounded text-[10px] uppercase tracking-wider font-bold transition-all cursor-pointer"
           >
             Redefinir Dados Padrão (Demo)
+          </button>
+          
+          <button 
+            onClick={async () => {
+              await signOut(auth);
+              setUser(null);
+              showToast("Desconectado com sucesso!", "success");
+            }}
+            className="w-full mt-2 py-1.5 px-3 bg-red-600/10 hover:bg-red-600/20 text-red-400 border border-red-900/30 rounded text-[10px] uppercase tracking-wider font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <Lock className="w-3 h-3 text-red-400/80" />
+            Desconectar / Sair
           </button>
         </div>
       </aside>
