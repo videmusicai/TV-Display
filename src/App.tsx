@@ -87,6 +87,7 @@ interface ScreenData {
   location: string;
   status: string;
   currentImage: string; // ID do template ou URL/Base64
+  currentVideo?: string; // Base64 ou URL de vídeo
   aspectRatio: string;
   lastSync: string;
   overlayPrices: boolean;
@@ -1240,9 +1241,19 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
   return (
     <div className="w-screen h-screen bg-black overflow-hidden relative flex items-center justify-center font-sans select-none">
       
-      {/* 1. LAYER DE BACKGROUND: Imagem Real-Time (Preset SVG ou Base64 personalizada do usuário) */}
+      {/* 1. LAYER DE BACKGROUND: Imagem/Vídeo Real-Time (Preset SVG, Base64 de Imagem ou Vídeo do usuário) */}
       <div className="absolute inset-0 w-full h-full flex items-center justify-center">
-        {presetTemplate ? (
+        {(screen?.displayMode || "single") === "single" && screen?.currentVideo ? (
+          <video 
+            src={screen.currentVideo}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="w-full h-full object-cover animate-fade-in"
+            key={screen.currentVideo}
+          />
+        ) : presetTemplate ? (
           <div 
             className="w-full h-full animate-fade-in"
             key={activeImageToShow}
@@ -1258,7 +1269,7 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
         ) : (
           <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center text-slate-500">
             <Tv className="w-16 h-16 opacity-30 mb-2" />
-            <p className="text-xs tracking-wider font-mono">NENHUMA IMAGEM ENVIADA PARA ESTA TELA</p>
+            <p className="text-xs tracking-wider font-mono">NENHUMA IMAGEM OU VÍDEO ENVIADO PARA ESTA TELA</p>
           </div>
         )}
       </div>
@@ -2678,6 +2689,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         overlayPrices: updated.overlayPrices,
         selectedCategory: updated.selectedCategory,
         currentImage: updated.currentImage,
+        currentVideo: updated.currentVideo || "",
         clientId: updated.clientId || getCurrentClientId(),
         displayMode: updated.displayMode || "single",
         playlist: updated.playlist || [],
@@ -3560,9 +3572,11 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
                       return (
                         <div key={sc.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between group relative hover:shadow-md transition-all">
-                          {/* Imagem de Preview Mockup 16:9 */}
+                          {/* Imagem/Vídeo de Preview Mockup 16:9 */}
                           <div className="h-32 bg-slate-900 relative flex items-center justify-center overflow-hidden border-b border-slate-100">
-                            {presetImg ? (
+                            {(sc.displayMode || "single") === "single" && sc.currentVideo ? (
+                              <video src={sc.currentVideo} muted className="w-full h-full object-cover" />
+                            ) : presetImg ? (
                               <div className="w-full h-full scale-[0.6] opacity-90 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: presetImg.svgMarkup }} />
                             ) : isCustomUploaded ? (
                               <img src={activeImage} alt="Preview custom" className="w-full h-full object-cover" />
@@ -3611,7 +3625,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                 <div className="flex justify-between text-[10px]">
                                   <span className="text-slate-500">Mídia Ativa:</span>
                                   <span className="font-semibold text-slate-700 truncate max-w-[120px]">
-                                    {presetImg ? presetImg.name : isCustomUploaded ? "Imagem/Promoção Customizada" : "Padrão"}
+                                    {(sc.displayMode || "single") === "single" && sc.currentVideo ? "Vídeo Customizado 📹" : presetImg ? presetImg.name : isCustomUploaded ? "Imagem/Promoção Customizada" : "Padrão"}
                                   </span>
                                 </div>
                                 <div className="flex justify-between items-center text-[10px] bg-blue-50/70 p-1.5 rounded border border-blue-100 mt-2 font-semibold">
@@ -5064,24 +5078,144 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
               {/* RENDER MODO SINGLE */}
               {(editingScreen.displayMode || "single") === "single" ? (
-                <div>
-                  <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1">Escolher Template Gráfico Padrão</label>
-                  <select 
-                    value={editingScreen.currentImage.startsWith("data:") ? "custom" : editingScreen.currentImage}
-                    onChange={(e) => {
-                      const selVal = e.target.value;
-                      if (selVal !== "custom") {
-                        setEditingScreen({ ...editingScreen, currentImage: selVal });
-                      }
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500/10 font-semibold"
-                  >
-                    <option value="chalk-bakery">🥖 Quadro Negro - Pães Artesanais (Rústico)</option>
-                    <option value="pastel-sweet">🍰 Doce Charme - Confeitaria (Blush)</option>
-                    <option value="cozy-coffee">☕ Cafeteria Premium - Bebidas (Stone Dark)</option>
-                    <option value="modern-brunch">🥪 Brunch Moderno - Sanduíches (Teal Minimal)</option>
-                    <option value="custom" disabled>🖼️ Imagem de IA Carregada pelo Usuário</option>
-                  </select>
+                <div className="space-y-4">
+                  {/* --- AREA PARA SUBIR IMAGEM MANUALMENTE --- */}
+                  <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                        🖼️ Imagem Manual do Cardápio
+                      </label>
+                      {editingScreen.currentImage && (
+                        <span className="text-[9px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded uppercase">Ativa</span>
+                      )}
+                    </div>
+                    
+                    {/* Preview se existir imagem ativa e sem video */}
+                    {editingScreen.currentImage && !editingScreen.currentVideo && (
+                      <div className="relative w-full h-24 bg-slate-100 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
+                        <img 
+                          src={editingScreen.currentImage} 
+                          alt="Visualização da imagem" 
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setEditingScreen({ ...editingScreen, currentImage: "" })}
+                          className="absolute top-2.5 right-2.5 p-1 bg-red-600 hover:bg-red-700 text-white rounded-full shadow transition-all"
+                          title="Remover Imagem"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="file"
+                        accept="image/*"
+                        id="screen-manual-image-uploader"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+
+                          if (file.size > 10 * 1024 * 1024) {
+                            showToast("Erro: A imagem excede o tamanho limite de 10 MB.", "error");
+                            return;
+                          }
+
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            const res = event.target?.result as string;
+                            setEditingScreen({
+                              ...editingScreen,
+                              currentImage: res,
+                              currentVideo: "" // Remove o vídeo quando colocar imagem
+                            });
+                            showToast("Imagem manual carregada com sucesso!", "success");
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                      />
+                      <label 
+                        htmlFor="screen-manual-image-uploader"
+                        className="flex-1 flex items-center justify-center gap-2 border border-dashed border-slate-300 hover:border-blue-500 bg-white py-2.5 px-3 rounded-lg cursor-pointer hover:bg-slate-50 text-xs font-bold text-slate-700 transition-all"
+                      >
+                        <Upload className="w-4 h-4 text-slate-400" />
+                        Escolher Imagem (Até 10MB)
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* --- AREA PARA SUBIR VÍDEO MANUALMENTE --- */}
+                  <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                        📹 Vídeo de Exibição (Máx 10 MB)
+                      </label>
+                      {editingScreen.currentVideo && (
+                        <span className="text-[9px] bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded uppercase">Ativo</span>
+                      )}
+                    </div>
+                    
+                    {/* Preview se existir vídeo */}
+                    {editingScreen.currentVideo && (
+                      <div className="relative w-full h-24 bg-slate-100 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
+                        <video 
+                          src={editingScreen.currentVideo}
+                          muted 
+                          controls
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setEditingScreen({ ...editingScreen, currentVideo: "" })}
+                          className="absolute top-2.5 right-2.5 p-1 bg-red-600 hover:bg-red-700 text-white rounded-full shadow transition-all"
+                          title="Remover Vídeo"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="file"
+                        accept="video/*"
+                        id="screen-manual-video-uploader"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+
+                          if (file.size > 10 * 1024 * 1024) {
+                            showToast("Erro: O vídeo excede o tamanho limite de 10 MB.", "error");
+                            return;
+                          }
+
+                          showToast("Carregando vídeo... aguarde", "info");
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            const res = event.target?.result as string;
+                            setEditingScreen({
+                              ...editingScreen,
+                              currentVideo: res,
+                              currentImage: "" // Remove a imagem quando colocar de vídeo
+                            });
+                            showToast("Vídeo de até 10MB carregado com sucesso!", "success");
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                      />
+                      <label 
+                        htmlFor="screen-manual-video-uploader"
+                        className="flex-1 flex items-center justify-center gap-2 border border-dashed border-slate-300 hover:border-blue-500 bg-white py-2.5 px-3 rounded-lg cursor-pointer hover:bg-slate-50 text-xs font-bold text-slate-700 transition-all"
+                      >
+                        <Upload className="w-4 h-4 text-slate-400" />
+                        Escolher Vídeo (Até 10MB)
+                      </label>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 /* RENDER MODO PLAYLIST (ROTATION CAROUSEL) */
