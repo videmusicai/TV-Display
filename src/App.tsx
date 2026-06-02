@@ -726,6 +726,28 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [rawProducts, setRawProducts] = useState<ProductData[]>([]);
   const [user, setUser] = useState<any>(null);
 
+  // Estado para o Modal de Confirmação Customizado (Imune ao Iframe Sandbox)
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {}
+  });
+
+  const requestConfirmation = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmModal({
+      isOpen: true,
+      title,
+      message,
+      onConfirm
+    });
+  };
+
   // Estados dos Formulários de Autenticação (Login, Registro SaaS e Pareamento)
   const [authMode, setAuthMode] = useState<"login" | "signup" | "pair">("login");
   const [authEmail, setAuthEmail] = useState("");
@@ -1289,15 +1311,20 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   };
 
   const handleDeleteClient = async (id: string, name: string) => {
-    if (!window.confirm(`Deseja realmente remover o cliente "${name}" permanentemente do Vitrion? Todas as TVs sintonizadas a ele perderão o sinal.`)) return;
-    try {
-      await deleteDoc(doc(db, "clients", id));
-      showToast(`Cliente "${name}" excluído e removido do sistema com sucesso!`, "success");
-    } catch (err) {
-      console.error("Erro ao excluir cliente:", err);
-      showToast("Erro ao remover o cliente e suas chaves do Firebase.", "error");
-      handleFirestoreError(err, OperationType.DELETE, `clients/${id}`);
-    }
+    requestConfirmation(
+      "Confirmar Exclusão de Cliente",
+      `Deseja realmente remover o cliente "${name}" permanentemente do Vitrion? Todas as TVs sintonizadas a ele perderão o sinal. Esta ação é definitiva e irreversível.`,
+      async () => {
+        try {
+          await deleteDoc(doc(db, "clients", id));
+          showToast(`Cliente "${name}" excluído e removido do sistema com sucesso!`, "success");
+        } catch (err) {
+          console.error("Erro ao excluir cliente:", err);
+          showToast("Erro ao remover o cliente e suas chaves do Firebase.", "error");
+          handleFirestoreError(err, OperationType.DELETE, `clients/${id}`);
+        }
+      }
+    );
   };
 
   const handleUpdateClientStatus = async (clientId: string, newStatus: "active" | "suspended" | "pending" | "standby") => {
@@ -1737,12 +1764,17 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   };
 
   const handleDeleteProduct = async (id: string) => {
-    if (!window.confirm("Deseja realmente excluir este produto do catálogo?")) return;
-    try {
-      await deleteDoc(doc(db, "products", id));
-    } catch (err: unknown) {
-      handleFirestoreError(err, OperationType.DELETE, `products/${id}`);
-    }
+    requestConfirmation(
+      "Confirmar Exclusão de Produto",
+      "Deseja realmente excluir este produto do catálogo?",
+      async () => {
+        try {
+          await deleteDoc(doc(db, "products", id));
+        } catch (err: unknown) {
+          handleFirestoreError(err, OperationType.DELETE, `products/${id}`);
+        }
+      }
+    );
   };
 
   // 5. ATUALIZA CONFIGURAÇÃO DE UMA TELA (E.G. OVERLAY OU PRESET)
@@ -4184,6 +4216,39 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 className={`px-4 py-2 font-bold text-xs rounded-lg uppercase tracking-wider transition-all ${broadcastingScreens.length === 0 ? "bg-slate-300 text-slate-500 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700 text-white shadow-md"}`}
               >
                 Transmitir Agora
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CONFIRMAÇÃO CUSTOMIZADO PREMIUM ANTI-SLEEP & ANTI-IFRAME-SANDBOX */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-[110] bg-slate-950/80 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in font-sans">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-w-sm w-full p-6 space-y-4">
+            <div className="flex flex-col items-center text-center space-y-2">
+              <div className="p-3 bg-amber-50 rounded-full text-amber-600 border border-amber-100">
+                <AlertCircle className="w-6 h-6 animate-pulse" />
+              </div>
+              <h3 className="font-sans font-black text-slate-800 text-sm uppercase tracking-wider">{confirmModal.title}</h3>
+              <p className="font-sans text-xs text-slate-500 leading-relaxed font-semibold">{confirmModal.message}</p>
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button 
+                onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                className="flex-1 py-2 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer border border-slate-300"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => {
+                  confirmModal.onConfirm();
+                  setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                }}
+                className="flex-1 py-2 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase tracking-wider rounded-lg transition-all shadow-md cursor-pointer"
+              >
+                Confirmar
               </button>
             </div>
           </div>

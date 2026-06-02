@@ -61,16 +61,16 @@ service cloud.firestore {
 
     // Clients validation helper
     function isValidClient(data) {
-      return (data.id == null || (data.id is string && data.id.size() <= 128))
-        && (data.name == null || (data.name is string && data.name.size() <= 200))
-        && (data.ownerEmail == null || (data.ownerEmail is string && data.ownerEmail.size() <= 200))
-        && (data.expirationDate == null || (data.expirationDate is string && data.expirationDate.size() <= 200))
-        && (data.status == null || (data.status is string && data.status.size() <= 50))
-        && (data.createdAt == null || (data.createdAt is string && data.createdAt.size() <= 200))
-        && (data.contactPhone == null || (data.contactPhone is string && data.contactPhone.size() <= 50))
-        && (data.phone == null || (data.phone is string && data.phone.size() <= 50))
-        && (data.plan == null || (data.plan is string && data.plan.size() <= 50))
-        && (data.monthlyFee == null || data.monthlyFee is number);
+      return (data.id == null || data.id is string)
+        && (data.name == null || data.name is string)
+        && (data.ownerEmail == null || data.ownerEmail is string)
+        && (data.expirationDate == null || data.expirationDate is string)
+        && (data.status == null || data.status is string)
+        && (data.createdAt == null || data.createdAt is string)
+        && (data.contactPhone == null || data.contactPhone is string)
+        && (data.phone == null || data.phone is string)
+        && (data.plan == null || data.plan is string)
+        && (data.monthlyFee == null || data.monthlyFee is number || data.monthlyFee is string);
     }
 
     // Clients collection
