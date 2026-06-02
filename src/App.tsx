@@ -34,7 +34,8 @@ import {
   Search,
   User,
   MapPin,
-  Phone
+  Phone,
+  Mail
 } from "lucide-react";
 import { 
   collection, 
@@ -565,8 +566,17 @@ export function StoreSettingsPanel({
   setUser,
   showToast
 }: StoreSettingsPanelProps) {
+  const getCleanUsername = (emailStr: string): string => {
+    if (!emailStr) return "";
+    if (emailStr.endsWith("@vitrion.com.br")) {
+      return emailStr.replace("@vitrion.com.br", "");
+    }
+    return emailStr;
+  };
+
   const [establishmentName, setEstablishmentName] = useState(loggedInClient?.name || "");
-  const [userEmail, setUserEmail] = useState(loggedInClient?.ownerEmail || user?.email || "");
+  const [username, setUsername] = useState(getCleanUsername(loggedInClient?.ownerEmail || user?.email || ""));
+  const [contactEmail, setContactEmail] = useState(loggedInClient?.contactEmail || "");
   const [password, setPassword] = useState("");
   const [address, setAddress] = useState(loggedInClient?.address || "");
   const [phone1, setPhone1] = useState(loggedInClient?.phone || "");
@@ -577,7 +587,8 @@ export function StoreSettingsPanel({
   useEffect(() => {
     if (loggedInClient) {
       setEstablishmentName(loggedInClient.name || "");
-      setUserEmail(loggedInClient.ownerEmail || user?.email || "");
+      setUsername(getCleanUsername(loggedInClient.ownerEmail || user?.email || ""));
+      setContactEmail(loggedInClient.contactEmail || "");
       setAddress(loggedInClient.address || "");
       setPhone1(loggedInClient.phone || "");
       setPhone2(loggedInClient.contactPhone || "");
@@ -590,10 +601,15 @@ export function StoreSettingsPanel({
       showToast("O nome do estabelecimento é obrigatório.", "error");
       return;
     }
-    if (!userEmail.trim() || !userEmail.includes("@")) {
-      showToast("Insira um e-mail de usuário válido.", "error");
+    
+    const cleanUserStr = username.trim().toLowerCase().replace(/\s+/g, "");
+    if (!cleanUserStr) {
+      showToast("Insira um nome de usuário válido.", "error");
       return;
     }
+
+    const finalEmail = cleanUserStr.includes("@") ? cleanUserStr : `${cleanUserStr}@vitrion.com.br`;
+
     if (password && password.length < 6) {
       showToast("A senha deve conter no mínimo 6 caracteres.", "error");
       return;
@@ -605,12 +621,12 @@ export function StoreSettingsPanel({
       const currentAuthUser = auth.currentUser;
       if (currentAuthUser && !currentAuthUser.uid.startsWith("bypass_")) {
         // If email changed, update in FirebaseAuth
-        if (currentAuthUser.email?.toLowerCase() !== userEmail.toLowerCase()) {
+        if (currentAuthUser.email?.toLowerCase() !== finalEmail.toLowerCase()) {
           try {
-            await updateEmail(currentAuthUser, userEmail);
+            await updateEmail(currentAuthUser, finalEmail);
           } catch (err: any) {
             if (err.code === "auth/requires-recent-login") {
-              showToast("Por segurança, saia e entre novamente antes de alterar o e-mail de login.", "error");
+              showToast("Por segurança, saia e entre novamente antes de alterar as credenciais.", "error");
               setIsSaving(false);
               return;
             }
@@ -635,7 +651,7 @@ export function StoreSettingsPanel({
         const localBypassStr = localStorage.getItem("vitrion_bypass_user");
         if (localBypassStr) {
           const bypassObj = JSON.parse(localBypassStr);
-          bypassObj.email = userEmail;
+          bypassObj.email = finalEmail;
           localStorage.setItem("vitrion_bypass_user", JSON.stringify(bypassObj));
           setUser(bypassObj);
         }
@@ -644,13 +660,18 @@ export function StoreSettingsPanel({
       // 2. Update client document in Firestore
       if (loggedInClient && loggedInClient.id) {
         const clientRef = doc(db, "clients", loggedInClient.id);
-        await updateDoc(clientRef, {
+        const updatePayload: any = {
           name: establishmentName.trim(),
-          ownerEmail: userEmail.trim().toLowerCase(),
+          ownerEmail: finalEmail,
+          contactEmail: contactEmail.trim().toLowerCase(),
           address: address.trim(),
           phone: phone1.trim(),
           contactPhone: phone2.trim()
-        });
+        };
+        if (password) {
+          updatePayload.password = password;
+        }
+        await updateDoc(clientRef, updatePayload);
       }
 
       showToast("Configurações do estabelecimento salvas com sucesso!", "success");
@@ -687,23 +708,23 @@ export function StoreSettingsPanel({
             <div className="space-y-3">
               <div>
                 <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider mb-1">
-                  E-mail do Usuário / Login
+                  Nome de Usuário (Login)
                 </label>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 pointer-events-none text-xs">
-                    @
+                    <User className="w-3.5 h-3.5 text-slate-400" />
                   </span>
                   <input
-                    type="email"
-                    value={userEmail}
-                    onChange={(e) => setUserEmail(e.target.value)}
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
                     required
-                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-8 pr-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
-                    placeholder="email@estabelecimento.com"
+                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold font-mono"
+                    placeholder="ex: padaria_colonial"
                   />
                 </div>
                 <p className="text-[9px] text-slate-400 mt-1 font-sans">
-                  Importante: Este e-mail será usado para logar no sistema.
+                  Importante: Use apenas letras minúsculas, números ou sublinhado (_). Sem espaços ou acentos.
                 </p>
               </div>
 
@@ -748,6 +769,25 @@ export function StoreSettingsPanel({
                   className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
                   placeholder="Nome comercial da sua loja ou padaria"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider mb-1">
+                  E-mail de Contato / Comunicação
+                </label>
+                <div className="relative">
+                  <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+                  <input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
+                    placeholder="Ex: financeiro@padariacentral.com.br"
+                  />
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1 font-sans">
+                  E-mail para contatos de faturamento, suporte e newsletters do Vitrion.
+                </p>
               </div>
 
               <div>
@@ -1258,10 +1298,7 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
           </div>
         </div>
       )}
-      {/* Identificador Sutil de Tela Cheia no Canto */}
-      <div className="absolute left-6 bottom-6 text-[10px] font-mono text-white/20 bg-black/40 px-2 py-1 rounded">
-        Vitrion Digital Display Screen: {screen?.id} • {screen?.name}
-      </div>
+
 
     </div>
   );
@@ -3013,7 +3050,9 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               )}
 
               <div>
-                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Usuário de Acesso</label>
+                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">
+                  {authMode === "signup" ? "Escolha seu Nome de Usuário" : "Seu Nome de Usuário (Login)"}
+                </label>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
                     <UserCheck className="w-4 h-4" />
@@ -3022,11 +3061,23 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     type="text"
                     required
                     value={authEmail}
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    placeholder="Seu usuário"
-                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val.includes("@")) {
+                        setAuthEmail(val.trim());
+                      } else {
+                        setAuthEmail(val.toLowerCase().replace(/[^a-z0-9_]/g, ""));
+                      }
+                    }}
+                    placeholder={authMode === "signup" ? "ex: padariacentral" : "Seu usuário"}
+                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600 font-mono"
                   />
                 </div>
+                {authMode === "signup" && (
+                  <p className="text-[9px] text-slate-500 mt-1">
+                    Não precisa de e-mail! Escolha um nome exclusivo (apenas letras minúsculas, números e sublinhados).
+                  </p>
+                )}
               </div>
 
               <div>
@@ -4490,7 +4541,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                       <thead>
                         <tr className="bg-slate-100 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200 border-t">
                           <th className="p-3.5">Nome do Cliente / Loja</th>
-                          <th className="p-3.5">Email de Acesso</th>
+                          <th className="p-3.5">Usuário de Acesso</th>
                           <th className="p-3.5 text-center">Plano</th>
                           <th className="p-3.5 text-center">Mensalidade</th>
                           <th className="p-3.5 text-center">Vencimento</th>
@@ -4528,7 +4579,12 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                   </div>
                                 </td>
                                 <td className="p-3.5 text-left">
-                                  <div className="text-slate-600 font-mono text-[11px] font-bold">{client.ownerEmail}</div>
+                                  <div className="text-slate-800 font-mono text-xs font-bold flex items-center gap-1">
+                                    <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    {client.ownerEmail?.endsWith("@vitrion.com.br") 
+                                      ? client.ownerEmail.replace("@vitrion.com.br", "") 
+                                      : client.ownerEmail}
+                                  </div>
                                   <div className="text-[10px] text-blue-600/90 font-mono font-bold mt-1 bg-blue-50 border border-blue-100/40 px-1.5 py-0.5 rounded inline-flex items-center gap-1 shrink-0" title="Senha salva para o cliente">
                                     <Lock className="w-2.5 h-2.5" /> Senha: <span className="text-slate-800">{client.password || "123456"}</span>
                                   </div>
@@ -4714,16 +4770,25 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     </div>
 
                     <div>
-                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Email Principal do Cliente</label>
+                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Nome de Usuário (Login de Acesso)</label>
                       <input 
-                        type="email" 
+                        type="text" 
                         required
-                        placeholder="Ex: contato@bellavista.com.br"
+                        placeholder="Ex: padaria_bellavista"
                         value={newClientEmail}
-                        onChange={(e) => setNewClientEmail(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val.includes("@")) {
+                            setNewClientEmail(val.trim());
+                          } else {
+                            setNewClientEmail(val.toLowerCase().replace(/[^a-z0-9_]/g, ""));
+                          }
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono font-bold"
                       />
-                      <p className="text-[9px] text-slate-400 mt-1 font-sans">Este email vincula a TV do cliente à sua conta para garantir segurança.</p>
+                      <p className="text-[9px] text-slate-400 mt-1 font-sans">
+                        Este será o usuário de login do cliente. Sem espaços, acentos ou e-mail obrigatório (ex: padariacentral).
+                      </p>
                     </div>
 
                     <div>
