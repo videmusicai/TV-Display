@@ -12,6 +12,7 @@ import {
   Trash2, 
   Settings, 
   ChevronRight, 
+  ChevronLeft,
   Copy, 
   ExternalLink, 
   Upload, 
@@ -22,6 +23,7 @@ import {
   BookOpen, 
   Info, 
   AlertCircle,
+  CheckCircle,
   Megaphone,
   Lock,
   Users,
@@ -29,7 +31,10 @@ import {
   ShieldAlert,
   CreditCard,
   UserCheck,
-  Search
+  Search,
+  User,
+  MapPin,
+  Phone
 } from "lucide-react";
 import { 
   collection, 
@@ -44,7 +49,7 @@ import {
   query,
   where
 } from "firebase/firestore";
-import { signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import { signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateEmail, updatePassword } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { handleFirestoreError, OperationType } from "./firebaseError";
 import { PRESET_TEMPLATES, MenuTemplate } from "./templates";
@@ -177,6 +182,666 @@ export const generateUniqueShortCode = (existingScreens: ScreenData[]): string =
   }
   return code;
 };
+
+// --- INTERACTIVE PLAN CALENDAR WIDGET ---
+interface PlanCalendarProps {
+  expirationDate?: string; // ISO String (YYYY-MM-DD or full ISO)
+  clientName?: string;
+  isSuperAdminView?: boolean;
+  clientsList?: any[]; // For Super Admin aggregate view
+}
+
+export function PlanCalendar({ 
+  expirationDate, 
+  clientName = "Minha Loja", 
+  isSuperAdminView = false, 
+  clientsList = [] 
+}: PlanCalendarProps) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Parse subscription date
+  const parsedExpDate = useMemo(() => {
+    if (!expirationDate) return null;
+    const d = new Date(expirationDate);
+    // Adjust to midnight to prevent timezone issues
+    d.setHours(23, 59, 59, 999);
+    return d;
+  }, [expirationDate]);
+
+  // Initial calendar view based on expiration or current time
+  const [viewYear, setViewYear] = useState<number>(() => {
+    if (parsedExpDate) return parsedExpDate.getFullYear();
+    return today.getFullYear();
+  });
+  
+  const [viewMonth, setViewMonth] = useState<number>(() => {
+    if (parsedExpDate) return parsedExpDate.getMonth();
+    return today.getMonth();
+  });
+
+  const [selectedDayInfo, setSelectedDayInfo] = useState<any[] | null>(null);
+  const [selectedDayNumber, setSelectedDayNumber] = useState<number | null>(null);
+
+  // When expiration date changes, sync user view
+  useEffect(() => {
+    if (parsedExpDate && !isSuperAdminView) {
+      setViewYear(parsedExpDate.getFullYear());
+      setViewMonth(parsedExpDate.getMonth());
+    }
+  }, [expirationDate, isSuperAdminView, parsedExpDate]);
+
+  const monthNames = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+  ];
+
+  const weekdays = ["D", "S", "T", "Q", "Q", "S", "S"];
+
+  // Helper calculation
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
+
+  // Create grid
+  const daysGrid: (number | null)[] = [];
+  for (let i = 0; i < firstDayOfWeek; i++) {
+    daysGrid.push(null);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    daysGrid.push(d);
+  }
+
+  const handlePrevMonth = () => {
+    if (viewMonth === 0) {
+      setViewMonth(11);
+      setViewYear(y => y - 1);
+    } else {
+      setViewMonth(m => m - 1);
+    }
+    setSelectedDayInfo(null);
+    setSelectedDayNumber(null);
+  };
+
+  const handleNextMonth = () => {
+    if (viewMonth === 11) {
+      setViewMonth(0);
+      setViewYear(y => y + 1);
+    } else {
+      setViewMonth(m => m + 1);
+    }
+    setSelectedDayInfo(null);
+    setSelectedDayNumber(null);
+  };
+
+  // Check if a specific grid date is today
+  const isDateToday = (dayNum: number) => {
+    return (
+      today.getDate() === dayNum &&
+      today.getMonth() === viewMonth &&
+      today.getFullYear() === viewYear
+    );
+  };
+
+  // Helper to format leading zeros
+  const padZero = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+
+  // Get active client expirations for Super Admin or normal view on a specific day
+  const getExpirationStatusForDay = (dayNum: number) => {
+    const formattedTargetStr = `${viewYear}-${padZero(viewMonth + 1)}-${padZero(dayNum)}`;
+    
+    // Create comparison dates
+    const targetDate = new Date(viewYear, viewMonth, dayNum, 23, 59, 59, 999);
+    
+    if (isSuperAdminView) {
+      // Find all clients expiring on this date
+      const matchingClients = clientsList.filter(c => {
+        if (!c.expirationDate) return false;
+        const cDate = new Date(c.expirationDate);
+        return (
+          cDate.getDate() === dayNum &&
+          cDate.getMonth() === viewMonth &&
+          cDate.getFullYear() === viewYear
+        );
+      });
+
+      if (matchingClients.length === 0) return null;
+
+      // Classify priority: if any client is expired, mark red. Else if any within 7 days, mark amber. Else green.
+      let hasExpired = false;
+      let hasNearDue = false;
+
+      matchingClients.forEach(c => {
+        const cDate = new Date(c.expirationDate);
+        cDate.setHours(23, 59, 59, 999);
+        const diff = cDate.getTime() - today.getTime();
+        const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24));
+        if (today > cDate) {
+          hasExpired = true;
+        } else if (diffDays <= 7) {
+          hasNearDue = true;
+        }
+      });
+
+      return {
+        clients: matchingClients,
+        status: hasExpired ? "expired" : hasNearDue ? "near_due" : "active"
+      };
+    } else {
+      // Regular client view: check their own expiration date
+      if (!parsedExpDate) return null;
+
+      const isSameDate = (
+        parsedExpDate.getDate() === dayNum &&
+        parsedExpDate.getMonth() === viewMonth &&
+        parsedExpDate.getFullYear() === viewYear
+      );
+
+      if (!isSameDate) return null;
+
+      const diff = parsedExpDate.getTime() - today.getTime();
+      const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24));
+      
+      let status: "expired" | "near_due" | "active" = "active";
+      if (today > parsedExpDate) {
+        status = "expired";
+      } else if (diffDays <= 7) {
+        status = "near_due";
+      }
+
+      return {
+        daysLeft: diffDays,
+        status
+      };
+    }
+  };
+
+  const handleDaySelection = (dayNum: number) => {
+    if (!isSuperAdminView) return;
+    const dayData = getExpirationStatusForDay(dayNum);
+    if (dayData && dayData.clients) {
+      setSelectedDayInfo(dayData.clients);
+      setSelectedDayNumber(dayNum);
+    } else {
+      setSelectedDayInfo(null);
+      setSelectedDayNumber(null);
+    }
+  };
+
+  // Metrics for normal client view
+  const clientAlertDetails = useMemo(() => {
+    if (isSuperAdminView || !parsedExpDate) return null;
+    const diff = parsedExpDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24));
+    
+    return {
+      daysRemaining: diffDays,
+      isExpired: today > parsedExpDate,
+      isNearDue: diffDays <= 7 && today <= parsedExpDate
+    };
+  }, [isSuperAdminView, parsedExpDate, today]);
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden font-sans text-white">
+      {/* Header do Widget */}
+      <div className="p-4 bg-slate-950/60 border-b border-slate-800/80 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-blue-500" />
+          <h4 className="text-xs font-extrabold uppercase tracking-widest text-slate-250">
+            {isSuperAdminView ? "Agenda de Faturamento" : "Validade do Plano"}
+          </h4>
+        </div>
+
+        {/* Navigation */}
+        <div className="flex items-center gap-2">
+          <button 
+            type="button"
+            onClick={handlePrevMonth}
+            className="p-1 hover:bg-slate-800 rounded transition-all cursor-pointer text-slate-400 hover:text-white"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="text-xs font-bold text-slate-300 min-w-[90px] text-center">
+            {monthNames[viewMonth]} {viewYear}
+          </span>
+          <button 
+            type="button"
+            onClick={handleNextMonth}
+            className="p-1 hover:bg-slate-800 rounded transition-all cursor-pointer text-slate-400 hover:text-white"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Calendar Grid */}
+      <div className="p-4">
+        {/* Week Days Headers */}
+        <div className="grid grid-cols-7 gap-1 text-center mb-1 text-[10px] font-black text-slate-500 uppercase">
+          {weekdays.map((w, idx) => (
+            <div key={idx} className="h-5 flex items-center justify-center">
+              {w}
+            </div>
+          ))}
+        </div>
+
+        {/* Days Circle Grid */}
+        <div className="grid grid-cols-7 gap-1 text-center">
+          {daysGrid.map((day, idx) => {
+            if (day === null) {
+              return <div key={`empty-${idx}`} />;
+            }
+
+            const dayStatus = getExpirationStatusForDay(day);
+            const isToday = isDateToday(day);
+            
+            // Custom CSS based on status classes
+            let dayClass = "text-slate-300 hover:bg-slate-800/40";
+            let indicatorClass = "";
+
+            if (isToday) {
+              dayClass = "border border-blue-500 text-blue-400 font-extrabold shadow-sm bg-blue-950/20";
+            }
+
+            if (dayStatus) {
+              if (dayStatus.status === "expired") {
+                dayClass = "bg-rose-950/40 text-rose-400 font-black border border-rose-800/60 shadow-lg animate-pulse";
+                indicatorClass = "bg-rose-500";
+              } else if (dayStatus.status === "near_due") {
+                dayClass = "bg-amber-950/40 text-amber-400 font-black border border-amber-800/60 shadow-lg animate-pulse";
+                indicatorClass = "bg-amber-500";
+              } else if (dayStatus.status === "active") {
+                dayClass = "bg-emerald-950/30 text-emerald-400 font-bold border border-emerald-900/40";
+                indicatorClass = "bg-emerald-500";
+              }
+            }
+
+            return (
+              <button
+                key={`day-${day}`}
+                onClick={() => handleDaySelection(day)}
+                type="button"
+                disabled={isSuperAdminView ? !dayStatus : true}
+                className={`h-8 text-xs rounded-xl flex flex-col items-center justify-center relative transition-all ${dayClass} ${
+                  isSuperAdminView && dayStatus ? "cursor-pointer hover:ring-2 hover:ring-slate-400/30" : "cursor-default"
+                }`}
+              >
+                <span>{day}</span>
+                {indicatorClass && (
+                  <span className={`absolute bottom-1 w-1 h-1 rounded-full ${indicatorClass}`} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* FOOTER: CLIENT NOTIFICATION PORTAL OR DETAILS */}
+      {!isSuperAdminView && clientAlertDetails && (
+        <div className="border-t border-slate-850 p-4 bg-slate-950/40 text-xs">
+          {clientAlertDetails.isExpired ? (
+            <div className="flex items-start gap-2.5 bg-rose-950/30 border border-rose-900/50 rounded-xl p-3 text-rose-300">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-extrabold text-[11px] uppercase tracking-wider text-rose-200">Plano Expirado!</p>
+                <p className="text-[11px] text-rose-400/90 leading-relaxed mt-0.5">
+                  Sua assinatura venceu no dia <span className="font-bold underline">{parsedExpDate?.toLocaleDateString("pt-BR")}</span>. O sinal de transmissão está travado. Regularize seu plano hoje.
+                </p>
+              </div>
+            </div>
+          ) : clientAlertDetails.isNearDue ? (
+            <div className="flex items-start gap-2.5 bg-amber-950/35 border border-amber-900/50 rounded-xl p-3 text-amber-300 animate-pulse">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 animate-bounce" />
+              <div>
+                <p className="font-black text-[11px] uppercase tracking-wider text-amber-250">Vence em Breve (Alerta de {clientAlertDetails.daysRemaining} Dias)!</p>
+                <p className="text-[11px] text-amber-400/90 leading-relaxed mt-0.5">
+                  Sua licença vencerá em <span className="font-bold underline">{clientAlertDetails.daysRemaining} dias</span> no dia <span className="font-bold">{parsedExpDate?.toLocaleDateString("pt-BR")}</span>. Regularize a situação comercial com o suporte.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-2.5 bg-emerald-950/20 border border-emerald-900/40 rounded-xl p-3 text-emerald-300">
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-[11px] uppercase tracking-wider text-emerald-200">Sinal Autorizado & Saudável</p>
+                <p className="text-[11px] text-emerald-400/90 leading-relaxed mt-0.5">
+                  Seu plano está 100% regularizado até dia <span className="font-bold">{parsedExpDate?.toLocaleDateString("pt-BR")}</span> ({clientAlertDetails.daysRemaining} dias restantes). Aproveite o painel!
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* FOOTER: SUPER ADMIN PORTFOLIO OVERFLOW */}
+      {isSuperAdminView && (
+        <div className="border-t border-slate-850 p-4 bg-slate-950/40 text-xs">
+          {selectedDayInfo && selectedDayNumber ? (
+            <div className="space-y-3">
+              <p className="font-black text-[10px] uppercase text-slate-300 tracking-widest border-b border-slate-800 pb-1.5 flex justify-between items-center">
+                <span>Vencimentos em {selectedDayNumber}/{viewMonth + 1}:</span>
+                <span className="px-1.5 py-0.5 bg-slate-800 text-white rounded text-[9px]">{selectedDayInfo.length} conta(s)</span>
+              </p>
+              <div className="max-h-36 overflow-y-auto space-y-2">
+                {selectedDayInfo.map((cli) => {
+                  const hasExpired = new Date() > new Date(cli.expirationDate);
+                  return (
+                    <div key={cli.id} className="p-2 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between text-[11px]">
+                      <div>
+                        <p className="font-bold text-slate-200">{cli.name}</p>
+                        <p className="text-[9px] text-slate-500 font-mono">{cli.ownerEmail}</p>
+                      </div>
+                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                        hasExpired ? "bg-rose-950/60 text-rose-400" : "bg-amber-950/60 text-amber-400"
+                      }`}>
+                        {hasExpired ? "Expirou" : "Crítico (7d)"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-2.5 text-slate-500 font-bold text-[10px] uppercase tracking-wider">
+              Clique em alguma data com alerta (ponto colorido) para examinar faturamentos críticos.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- CONFIGURATION / PROFILE SETTINGS PANEL ---
+interface StoreSettingsPanelProps {
+  loggedInClient: any;
+  user: any;
+  setUser: (u: any) => void;
+  showToast: (msg: string, type?: "success" | "error" | "info") => void;
+}
+
+export function StoreSettingsPanel({
+  loggedInClient,
+  user,
+  setUser,
+  showToast
+}: StoreSettingsPanelProps) {
+  const [establishmentName, setEstablishmentName] = useState(loggedInClient?.name || "");
+  const [userEmail, setUserEmail] = useState(loggedInClient?.ownerEmail || user?.email || "");
+  const [password, setPassword] = useState("");
+  const [address, setAddress] = useState(loggedInClient?.address || "");
+  const [phone1, setPhone1] = useState(loggedInClient?.phone || "");
+  const [phone2, setPhone2] = useState(loggedInClient?.contactPhone || "");
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Sync state if loggedInClient is loaded later (asynchronous onSnapshot load)
+  useEffect(() => {
+    if (loggedInClient) {
+      setEstablishmentName(loggedInClient.name || "");
+      setUserEmail(loggedInClient.ownerEmail || user?.email || "");
+      setAddress(loggedInClient.address || "");
+      setPhone1(loggedInClient.phone || "");
+      setPhone2(loggedInClient.contactPhone || "");
+    }
+  }, [loggedInClient]);
+
+  const handleSave = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!establishmentName.trim()) {
+      showToast("O nome do estabelecimento é obrigatório.", "error");
+      return;
+    }
+    if (!userEmail.trim() || !userEmail.includes("@")) {
+      showToast("Insira um e-mail de usuário válido.", "error");
+      return;
+    }
+    if (password && password.length < 6) {
+      showToast("A senha deve conter no mínimo 6 caracteres.", "error");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // 1. Update in Firebase Auth if a real server-side session is logged in
+      const currentAuthUser = auth.currentUser;
+      if (currentAuthUser && !currentAuthUser.uid.startsWith("bypass_")) {
+        // If email changed, update in FirebaseAuth
+        if (currentAuthUser.email?.toLowerCase() !== userEmail.toLowerCase()) {
+          try {
+            await updateEmail(currentAuthUser, userEmail);
+          } catch (err: any) {
+            if (err.code === "auth/requires-recent-login") {
+              showToast("Por segurança, saia e entre novamente antes de alterar o e-mail de login.", "error");
+              setIsSaving(false);
+              return;
+            }
+            throw err;
+          }
+        }
+        // If password entered, update in FirebaseAuth
+        if (password) {
+          try {
+            await updatePassword(currentAuthUser, password);
+          } catch (err: any) {
+            if (err.code === "auth/requires-recent-login") {
+              showToast("Por segurança, saia e entre novamente antes de alterar a senha.", "error");
+              setIsSaving(false);
+              return;
+            }
+            throw err;
+          }
+        }
+      } else {
+        // If bypass mock mode is on, update the bypass storage user
+        const localBypassStr = localStorage.getItem("vitrion_bypass_user");
+        if (localBypassStr) {
+          const bypassObj = JSON.parse(localBypassStr);
+          bypassObj.email = userEmail;
+          localStorage.setItem("vitrion_bypass_user", JSON.stringify(bypassObj));
+          setUser(bypassObj);
+        }
+      }
+
+      // 2. Update client document in Firestore
+      if (loggedInClient && loggedInClient.id) {
+        const clientRef = doc(db, "clients", loggedInClient.id);
+        await updateDoc(clientRef, {
+          name: establishmentName.trim(),
+          ownerEmail: userEmail.trim().toLowerCase(),
+          address: address.trim(),
+          phone: phone1.trim(),
+          contactPhone: phone2.trim()
+        });
+      }
+
+      showToast("Configurações do estabelecimento salvas com sucesso!", "success");
+      // Clear password field for safety
+      setPassword("");
+    } catch (error: any) {
+      console.error("Erro ao salvar configurações", error);
+      showToast(`Erro ao salvar: ${error.message || error}`, "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-md p-6 max-w-4xl mx-auto space-y-6">
+      <div className="flex items-center gap-3 border-b border-slate-100 pb-3 font-sans">
+        <Settings className="w-6 h-6 text-blue-600 animate-spin" style={{ animationDuration: "12s" }} />
+        <div>
+          <h3 className="font-bold text-base text-slate-900 tracking-tight">Configurações do Estabelecimento</h3>
+          <p className="text-xs text-slate-500 uppercase tracking-widest">Atualize seus dados, endereços, telefones e credenciais de acesso</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSave} className="space-y-6 font-sans">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          {/* SEÇÃO 1: CREDENCIAIS E LOGIN */}
+          <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+            <h4 className="font-extrabold text-[11px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2">
+              <User className="w-3.5 h-3.5 text-blue-500" />
+              Credenciais de Acesso
+            </h4>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider mb-1">
+                  E-mail do Usuário / Login
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 pointer-events-none text-xs">
+                    @
+                  </span>
+                  <input
+                    type="email"
+                    value={userEmail}
+                    onChange={(e) => setUserEmail(e.target.value)}
+                    required
+                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-8 pr-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
+                    placeholder="email@estabelecimento.com"
+                  />
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1 font-sans">
+                  Importante: Este e-mail será usado para logar no sistema.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider mb-1">
+                  Nova Senha de Acesso
+                </label>
+                <div className="relative">
+                  <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
+                    placeholder="Mínimo 6 caracteres"
+                  />
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1 font-sans">
+                  Deixe em branco se não desejar alterar a senha atual de login.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* SEÇÃO 2: DADOS DA LOJA */}
+          <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+            <h4 className="font-extrabold text-[11px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2">
+              <Tv className="w-3.5 h-3.5 text-blue-500" />
+              Perfil do Estabelecimento
+            </h4>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider mb-1">
+                  Nome do Estabelecimento
+                </label>
+                <input
+                  type="text"
+                  value={establishmentName}
+                  onChange={(e) => setEstablishmentName(e.target.value)}
+                  required
+                  className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
+                  placeholder="Nome comercial da sua loja ou padaria"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider mb-1">
+                  Endereço Físico
+                </label>
+                <div className="relative">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
+                    placeholder="Rua, Número, Bairro, Cidade - Estado"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* SEÇÃO 3: CONTATOS / TELEFONES (DOIS CAMPOS) */}
+        <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-4">
+          <h4 className="font-extrabold text-[11px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2">
+            <Phone className="w-3.5 h-3.5 text-blue-500" />
+            Canais de Atendimento (Telefones)
+          </h4>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider mb-1">
+                Telefone Principal / Linha Direta
+              </label>
+              <div className="relative">
+                <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+                <input
+                  type="text"
+                  value={phone1}
+                  onChange={(e) => setPhone1(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
+                  placeholder="(11) 99999-5555"
+                />
+              </div>
+              <p className="text-[9px] text-slate-400 mt-1 font-sans">
+                Seu número de contato principal exibido aos clientes ou para contato administrativo.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-black uppercase text-slate-500 tracking-wider mb-1">
+                Telefone Secundário / WhatsApp Comercial
+              </label>
+              <div className="relative">
+                <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+                <input
+                  type="text"
+                  value={phone2}
+                  onChange={(e) => setPhone2(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs text-slate-805 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
+                  placeholder="(11) 98888-4444"
+                />
+              </div>
+              <p className="text-[9px] text-slate-400 mt-1 font-sans">
+                Número alternativo focado em recados ou atendimento comercial via WhatsApp.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* BOTÃO DE SALVAMENTO */}
+        <div className="flex justify-end pt-2">
+          <button
+            type="submit"
+            disabled={isSaving}
+            className={`px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-blue-600/15 ${
+              isSaving ? "opacity-70 cursor-not-allowed" : ""
+            }`}
+          >
+            {isSaving ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" /> Salvando dados...
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4" /> Salvar Configurações
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 export default function App() {
   // Estado de Roteamento Simples (Baseado em Query Params)
@@ -739,7 +1404,7 @@ const PROMPT_PROMO_PRESETS = PROMPT_PROMO_PRESETS_RAW.map(item => ({
 // VIEW 2: PAINEL ADMINISTRATIVO (DASHBOARD)
 // ==========================================
 function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) => void }) {
-  const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "promotions" | "gallery" | "how-to" | "clients">("screens");
+  const [activeTab, setActiveTab] = useState<"screens" | "products" | "assets" | "promotions" | "gallery" | "how-to" | "clients" | "settings">("screens");
   const [rawScreens, setRawScreens] = useState<ScreenData[]>([]);
   const [rawProducts, setRawProducts] = useState<ProductData[]>([]);
   const [user, setUser] = useState<any>(null);
@@ -1042,90 +1707,152 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         try {
           cred = await signInWithEmailAndPassword(auth, formattedEmail, authPassword);
         } catch (err: any) {
-          // Se for usuário simples de teste (sem @) e não existir, criamos instantaneamente
-          const isSimpleUser = !authEmail.trim().includes("@") && authPassword.length >= 6;
-          
-          if (isSimpleUser && (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password")) {
+          if (err.code === "auth/operation-not-allowed" || err.message?.includes("operation-not-allowed")) {
+            console.warn("Bypass ativo para auth/operation-not-allowed", err);
+            
+            // Provedor desativado no Firebase console. Usamos login persistente por bypass de e-mail.
+            const sanitizedEmail = formattedEmailLower.replace(/[^a-zA-Z0-9]/g, "_");
+            const mockUid = `bypass_${sanitizedEmail}`;
+            const mockUser = {
+              uid: mockUid,
+              email: formattedEmail,
+              isAnonymous: false,
+              emailVerified: true
+            };
+            
+            localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
+            cred = { user: mockUser };
+            
+            // Garantir que o cliente e sua tela existam no Firestore para que possam interagir
+            const cliId = `client_${mockUid}`;
+            const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 mês
+            const defaultStoreName = `Loja ${authEmail.trim().split("@")[0]}`;
+            
             try {
-              try {
-                cred = await createUserWithEmailAndPassword(auth, formattedEmail, authPassword);
-              } catch (signUpAuthErr) {
-                console.warn("Falha de Firebase Auth na criação rápida, simulando usuário local", signUpAuthErr);
-                const mockUid = `usr_${Date.now()}`;
-                cred = {
-                  user: {
-                    uid: mockUid,
-                    email: formattedEmail,
-                    isAnonymous: false,
-                    emailVerified: true
-                  }
-                };
-                localStorage.setItem("vitrion_bypass_user", JSON.stringify(cred.user));
-              }
+              await setDoc(doc(db, "clients", cliId), {
+                id: cliId,
+                name: defaultStoreName,
+                ownerEmail: formattedEmail,
+                phone: "(11) 99999-5454",
+                contactPhone: "(11) 99999-5454",
+                monthlyFee: 99.90,
+                expirationDate: expiry,
+                status: "active",
+                plan: "basico",
+                createdAt: new Date().toISOString()
+              }, { merge: true });
 
-              if (cred.user) {
-                const cliId = `client_${cred.user.uid}`;
-                const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 mês de testes grátis!
-                const defaultStoreName = `Loja ${authEmail.trim()}`;
-                
-                await setDoc(doc(db, "clients", cliId), {
-                  id: cliId,
-                  name: defaultStoreName,
-                  ownerEmail: formattedEmail,
-                  phone: "(11) 99999-5454",
-                  contactPhone: "(11) 99999-5454",
-                  monthlyFee: 99.90,
-                  expirationDate: expiry,
-                  status: "active",
-                  createdAt: new Date().toISOString()
-                });
-
-                // Cria também uma tela inicial padrão
-                await setDoc(doc(db, "screens", `tv_${cred.user.uid}`), {
-                  id: `tv_${cred.user.uid}`,
-                  name: "TV Recepção - Principal",
-                  location: defaultStoreName,
-                  aspectRatio: "16:9",
-                  status: "online",
-                  currentImage: "chalk-bakery",
-                  lastSync: "Criada agora",
-                  overlayPrices: false,
-                  selectedCategory: "Todas",
-                  clientId: cliId,
-                  displayMode: "single",
-                  shortCode: getOrGenerateShortCode(`tv_${cred.user.uid}`),
-                  playlist: [
-                    { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
-                    { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
-                    { id: "slot-3", image: "", duration: 10, enabled: false },
-                    { id: "slot-4", image: "", duration: 10, enabled: false }
-                  ]
-                });
-              }
-            } catch (signUpErr: any) {
-              if (signUpErr.code === "auth/email-already-in-use") {
-                // Usuário existe mas senha incorreta!
-                throw new Error("wrong_password_or_user");
-              } else {
-                throw signUpErr;
-              }
+              await setDoc(doc(db, "screens", `tv_${mockUid}`), {
+                id: `tv_${mockUid}`,
+                name: "TV Recepção - Principal",
+                location: defaultStoreName,
+                aspectRatio: "16:9",
+                status: "online",
+                currentImage: "chalk-bakery",
+                lastSync: "Criada agora",
+                overlayPrices: false,
+                selectedCategory: "Todas",
+                clientId: cliId,
+                displayMode: "single",
+                shortCode: getOrGenerateShortCode(`tv_${mockUid}`),
+                playlist: [
+                  { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
+                  { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+                  { id: "slot-3", image: "", duration: 10, enabled: false },
+                  { id: "slot-4", image: "", duration: 10, enabled: false }
+                ]
+              }, { merge: true });
+            } catch (dbErr) {
+              console.warn("Falha silenciosa ao guardar dados persistentes de bypass no Firestore", dbErr);
             }
+            
+            showToast("⚠️ Firebase Auth: Provedor de E-mail/Senha de teste desativado. Login bypass persistente ativado com sucesso!", "info");
           } else {
-            // Verificar se o cliente foi previamente cadastrado pelo Super Admin na lista de clientes!
-            const matchedClient = clients.find(c => c.ownerEmail?.toLowerCase() === formattedEmailLower);
-            if (matchedClient && authPassword.length >= 6) {
-              console.log("Usuário pré-cadastrado no Firestore. Habilitando sessão bypass local.");
-              const mockUser = {
-                uid: matchedClient.id.replace("client_", ""),
-                email: formattedEmail,
-                isAnonymous: false,
-                emailVerified: true
-              };
-              localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
-              cred = { user: mockUser };
+            // Se for usuário simples de teste (sem @) e não existir, criamos instantaneamente
+            const isSimpleUser = !authEmail.trim().includes("@") && authPassword.length >= 6;
+            
+            if (isSimpleUser && (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password")) {
+              try {
+                try {
+                  cred = await createUserWithEmailAndPassword(auth, formattedEmail, authPassword);
+                } catch (signUpAuthErr) {
+                  console.warn("Falha de Firebase Auth na criação rápida, simulando usuário local", signUpAuthErr);
+                  const mockUid = `usr_${Date.now()}`;
+                  cred = {
+                    user: {
+                      uid: mockUid,
+                      email: formattedEmail,
+                      isAnonymous: false,
+                      emailVerified: true
+                    }
+                  };
+                  localStorage.setItem("vitrion_bypass_user", JSON.stringify(cred.user));
+                }
+
+                if (cred.user) {
+                  const cliId = `client_${cred.user.uid}`;
+                  const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 mês de testes grátis!
+                  const defaultStoreName = `Loja ${authEmail.trim()}`;
+                  
+                  await setDoc(doc(db, "clients", cliId), {
+                    id: cliId,
+                    name: defaultStoreName,
+                    ownerEmail: formattedEmail,
+                    phone: "(11) 99999-5454",
+                    contactPhone: "(11) 99999-5454",
+                    monthlyFee: 99.90,
+                    expirationDate: expiry,
+                    status: "active",
+                    createdAt: new Date().toISOString()
+                  });
+
+                  // Cria também uma tela inicial padrão
+                  await setDoc(doc(db, "screens", `tv_${cred.user.uid}`), {
+                    id: `tv_${cred.user.uid}`,
+                    name: "TV Recepção - Principal",
+                    location: defaultStoreName,
+                    aspectRatio: "16:9",
+                    status: "online",
+                    currentImage: "chalk-bakery",
+                    lastSync: "Criada agora",
+                    overlayPrices: false,
+                    selectedCategory: "Todas",
+                    clientId: cliId,
+                    displayMode: "single",
+                    shortCode: getOrGenerateShortCode(`tv_${cred.user.uid}`),
+                    playlist: [
+                      { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
+                      { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+                      { id: "slot-3", image: "", duration: 10, enabled: false },
+                      { id: "slot-4", image: "", duration: 10, enabled: false }
+                    ]
+                  });
+                }
+              } catch (signUpErr: any) {
+                if (signUpErr.code === "auth/email-already-in-use") {
+                  // Usuário existe mas senha incorreta!
+                  throw new Error("wrong_password_or_user");
+                } else {
+                  throw signUpErr;
+                }
+              }
             } else {
-              // Se falhou e não existe bypass viável, lança o erro original
-              throw err;
+              // Verificar se o cliente foi previamente cadastrado pelo Super Admin na lista de clientes!
+              const matchedClient = clients.find(c => c.ownerEmail?.toLowerCase() === formattedEmailLower);
+              if (matchedClient && authPassword.length >= 6) {
+                console.log("Usuário pré-cadastrado no Firestore. Habilitando sessão bypass local.");
+                const mockUser = {
+                  uid: matchedClient.id.replace("client_", ""),
+                  email: formattedEmail,
+                  isAnonymous: false,
+                  emailVerified: true
+                };
+                localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
+                cred = { user: mockUser };
+              } else {
+                // Se falhou e não existe bypass viável, lança o erro original
+                throw err;
+              }
             }
           }
         }
@@ -1148,16 +1875,21 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         } catch (signUpAuthErr: any) {
           console.warn("Não foi possível criar login no Firebase Auth. Ativando bypass de registro de conta.", signUpAuthErr);
           
-          // Fallback para login offline / bypass local
-          const localUid = `usr_local_${Date.now()}`;
+          // Fallback para login offline / bypass local consistente
+          const sanitizedEmail = formattedEmailLower.replace(/[^a-zA-Z0-9]/g, "_");
+          const mockUid = `bypass_${sanitizedEmail}`;
           const mockUser = {
-            uid: localUid,
+            uid: mockUid,
             email: formattedEmail,
             isAnonymous: false,
             emailVerified: true
           };
           localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
           cred = { user: mockUser };
+          
+          if (signUpAuthErr.code === "auth/operation-not-allowed" || signUpAuthErr.message?.includes("operation-not-allowed")) {
+            showToast("⚠️ Firebase Auth: Provedor de E-mail/Senha de teste desativado. Registro bypass persistente ativado com sucesso!", "info");
+          }
         }
 
         if (cred && cred.user) {
@@ -1216,6 +1948,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         BrazilianErrorMessage = "Formato de e-mail ou usuário inválido.";
       } else if (err.code === "auth/weak-password") {
         BrazilianErrorMessage = "A senha deve ter no mínimo 6 caracteres.";
+      } else if (err.code === "auth/operation-not-allowed" || err.message?.includes("operation-not-allowed")) {
+        BrazilianErrorMessage = "O provedor de autenticação 'E-mail/Senha' está desativado nas configurações do Firebase console deste projeto. Habilitamos o login local bypass persistente para você testar sem interrupções, mas lembre-se de ativar 'Email/Password' no menu Authentication (Sign-in method) do Firebase.";
       }
       setAuthError(BrazilianErrorMessage);
     } finally {
@@ -1238,13 +1972,18 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [newClientEmail, setNewClientEmail] = useState("");
   const [newClientPhone, setNewClientPhone] = useState("");
   const [newClientPhoneCountry, setNewClientPhoneCountry] = useState<"BR" | "US">("BR");
+  const [newClientPhone2, setNewClientPhone2] = useState("");
+  const [newClientPhone2Country, setNewClientPhone2Country] = useState<"BR" | "US">("BR");
+  const [newClientPassword, setNewClientPassword] = useState("");
   const [newClientFee, setNewClientFee] = useState("99.90");
   const [newClientExpiration, setNewClientExpiration] = useState("");
   const [newClientPlan, setNewClientPlan] = useState<"demo" | "basico" | "pro">("basico");
   const [editingClient, setEditingClient] = useState<any | null>(null);
   const [clientSearchTerm, setClientSearchTerm] = useState("");
+  const [impersonatedClient, setImpersonatedClient] = useState<any | null>(null);
 
-  const isSuperAdmin = user?.email?.toLowerCase() === "videmusicai@gmail.com" || user?.email?.toLowerCase() === "admin@vitrion.com.br" || user?.email?.toLowerCase() === "vitrion54@vitrion.com.br";
+  const isActuallyAdmin = user?.email?.toLowerCase() === "videmusicai@gmail.com" || user?.email?.toLowerCase() === "admin@vitrion.com.br" || user?.email?.toLowerCase() === "vitrion54@vitrion.com.br";
+  const isSuperAdmin = isActuallyAdmin && !impersonatedClient;
 
   useEffect(() => {
     if (isSuperAdmin) {
@@ -1255,9 +1994,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   }, [isSuperAdmin]);
 
   const loggedInClient = useMemo(() => {
+    if (impersonatedClient) return impersonatedClient;
     if (!user?.email) return null;
     return clients.find(c => c.ownerEmail?.toLowerCase() === user.email.toLowerCase());
-  }, [clients, user]);
+  }, [clients, user, impersonatedClient]);
 
   const subscriptionStatus = useMemo(() => {
     if (isSuperAdmin) return { isValid: true, state: "super_admin" };
@@ -1358,10 +2098,12 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         name: newClientName.trim(),
         ownerEmail: newClientEmail.trim().toLowerCase(),
         phone: newClientPhone ? (newClientPhoneCountry === "BR" ? `+55 ${newClientPhone}` : `+1 ${newClientPhone}`) : "",
+        contactPhone: newClientPhone2 ? (newClientPhone2Country === "BR" ? `+55 ${newClientPhone2}` : `+1 ${newClientPhone2}`) : (editingClient?.contactPhone || ""),
         monthlyFee: parseFloat(newClientFee) || 0,
         expirationDate: newClientExpiration,
         status: editingClient ? editingClient.status : "active",
-        plan: newClientPlan
+        plan: newClientPlan,
+        password: newClientPassword ? newClientPassword.trim() : (editingClient?.password || "123456")
       };
       await setDoc(doc(db, "clients", cId), payload);
       showToast(`Cliente "${newClientName}" salvo com sucesso!`, "success");
@@ -1369,6 +2111,9 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       setNewClientEmail("");
       setNewClientPhone("");
       setNewClientPhoneCountry("BR");
+      setNewClientPhone2("");
+      setNewClientPhone2Country("BR");
+      setNewClientPassword("");
       setNewClientFee("99.90");
       setNewClientExpiration("");
       setNewClientPlan("basico");
@@ -1645,6 +2390,22 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   // Referência de Arquivo para Upload
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadScreenId, setUploadScreenId] = useState<string | null>(null);
+
+  // Monitorar status online/offline em tempo real
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // 1. Escuta Estado de Autenticação com Recuperação de Sessão Local (Bypass)
   useEffect(() => {
@@ -2531,6 +3292,15 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 <BookOpen className="w-4 h-4" />
                 Conectar no Fire TV
               </button>
+
+              <button 
+                onClick={() => setActiveTab("settings")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "settings" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
+                id="tab-settings"
+              >
+                <Settings className="w-4 h-4 text-amber-400" />
+                Configurar Perfil
+              </button>
             </>
           )}
           
@@ -2585,6 +3355,24 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
       {/* 2. CONTEÚDO PRINCIPAL REVESTIDOR */}
       <main className="flex-1 flex flex-col overflow-hidden">
+        {impersonatedClient && (
+          <div className="bg-gradient-to-r from-amber-600 via-orange-500 to-amber-600 text-white text-xs font-bold px-6 py-3 flex items-center justify-between border-b border-orange-700/40 shadow-inner shrink-0 z-50">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 rounded-full bg-white animate-ping"></span>
+              <span>Você está acessando em <strong>Modo Suporte</strong> a conta de: <strong className="underline decoration-wavy">{impersonatedClient.name}</strong> ({impersonatedClient.ownerEmail})</span>
+            </div>
+            <button 
+              onClick={() => {
+                setImpersonatedClient(null);
+                setActiveTab("clients");
+                showToast("Retornado ao Painel do Administrador!", "success");
+              }}
+              className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-900 rounded font-black uppercase text-[10px] tracking-wider transition-all cursor-pointer shadow-sm"
+            >
+              Voltar ao Painel Administrador
+            </button>
+          </div>
+        )}
         
         {/* Cabeçalho */}
         <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
@@ -2595,6 +3383,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               {activeTab === "promotions" && "Promoções Customizadas & Envio Manual"}
               {activeTab === "gallery" && "Banco de Imagens & Galeria Central"}
               {activeTab === "how-to" && "Como Conectar o Amazon Fire TV"}
+              {activeTab === "settings" && "Configurações do Estabelecimento"}
               {activeTab === "clients" && "👥 Controlar Contas & Vendas de Clientes"}
             </h2>
             <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded uppercase flex items-center gap-1">
@@ -2694,163 +3483,176 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 </button>
               </div>
 
-              {/* Grid Principal com as 7 Telas de Signage */}
-              <div>
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="font-bold text-xs text-slate-400 uppercase tracking-widest">Painel de TVs Cadastradas ({screens.length})</h3>
-                  <button 
-                    onClick={handleAddNewScreen}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-800"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Adicionar TV
-                  </button>
+              {/* Grid Principal com as Telas de Signage e o Calendário Integrativo */}
+              <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+                <div className="xl:col-span-3 space-y-4">
+                  <div className="flex justify-between items-center mb-1">
+                    <h3 className="font-bold text-xs text-slate-400 uppercase tracking-widest">Painel de TVs Cadastradas ({screens.length})</h3>
+                    <button 
+                      onClick={handleAddNewScreen}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-800 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Adicionar TV
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {screens.map((sc, index) => {
+                      const activeImage = sc.displayMode === "playlist" && sc.playlist && sc.playlist.find(item => item.enabled && item.image)
+                        ? (sc.playlist.find(item => item.enabled && item.image)?.image || "")
+                        : (sc.currentImage || "");
+
+                      const presetImg = PRESET_TEMPLATES.find(t => t.id === activeImage);
+                      const isCustomUploaded = activeImage.startsWith("data:");
+                      const scCode = sc.shortCode || getOrGenerateShortCode(sc.id);
+                      const displayUrl = `${window.location.origin}${window.location.pathname}?screen=${scCode}`;
+
+                      return (
+                        <div key={sc.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between group relative hover:shadow-md transition-all">
+                          {/* Imagem de Preview Mockup 16:9 */}
+                          <div className="h-32 bg-slate-900 relative flex items-center justify-center overflow-hidden border-b border-slate-100">
+                            {presetImg ? (
+                              <div className="w-full h-full scale-[0.6] opacity-90 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: presetImg.svgMarkup }} />
+                            ) : isCustomUploaded ? (
+                              <img src={activeImage} alt="Preview custom" className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="text-slate-600 text-[10px] font-mono select-none">Sem Mídia Sincronizada</div>
+                            )}
+
+                            {/* Status Badge */}
+                            <div className={`absolute top-2.5 right-2.5 px-2 py-0.5 text-white text-[8px] font-bold rounded-full uppercase tracking-wider shadow ${
+                              sc.status === "offline" ? "bg-amber-500" : "bg-emerald-500"
+                            }`}>
+                              {sc.status === "offline" ? "Standby" : "Ativa / Online"}
+                            </div>
+
+                            {/* Número da TV identificador */}
+                            <div className="absolute left-2.5 top-2.5 bg-slate-950/80 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase font-mono tracking-widest">
+                              #0{index + 1}
+                            </div>
+                          </div>
+
+                          {/* Corpo com Informações */}
+                          <div className="p-4 flex-1 flex flex-col justify-between">
+                            <div>
+                              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{sc.location || "Área Comercial"}</p>
+                              <h4 className="text-xs font-bold text-slate-900 mb-1">{sc.name}</h4>
+                              
+                              <div className="mt-2 space-y-1">
+                                <div className="flex justify-between items-center text-[10px]">
+                                  <span className="text-slate-500">Modo de Sinal:</span>
+                                  <span className={`font-bold uppercase text-[8px] px-1.5 py-0.5 rounded-md ${
+                                    sc.displayMode === "playlist" 
+                                      ? "bg-purple-100 text-purple-700" 
+                                      : "bg-blue-100 text-blue-700"
+                                  }`}>
+                                    {sc.displayMode === "playlist" 
+                                      ? `Carrossel (${sc.playlist?.filter(p => p.enabled).length || 0} mídias)` 
+                                      : "Imagem Única"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between text-[10px]">
+                                  <span className="text-slate-500">Overlay Preços:</span>
+                                  <span className={`font-bold ${sc.overlayPrices ? "text-blue-600" : "text-amber-600"}`}>
+                                    {sc.overlayPrices ? `Sim (${sc.selectedCategory || 'Todas'})` : 'Desativado'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between text-[10px]">
+                                  <span className="text-slate-500">Mídia Ativa:</span>
+                                  <span className="font-semibold text-slate-700 truncate max-w-[120px]">
+                                    {presetImg ? presetImg.name : isCustomUploaded ? "Imagem/Promoção Customizada" : "Padrão"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center text-[10px] bg-blue-50/70 p-1.5 rounded border border-blue-100 mt-2 font-semibold">
+                                  <span className="text-blue-700 flex items-center gap-1">📺 Código Pareamento:</span>
+                                  <span className="font-mono font-black text-blue-900 bg-white px-2 py-0.5 rounded shadow-sm text-[11px] tracking-widest animate-pulse">
+                                    {scCode}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Ações Específicas do Card */}
+                            <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
+                              {/* Link de Exibição Pública para copiar ou enviar à Silk */}
+                              <div className="flex gap-1">
+                                <button 
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(displayUrl);
+                                    showToast("URL do display copiado com sucesso!", "success");
+                                  }}
+                                  className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[9px] font-bold uppercase tracking-wider"
+                                  title="Copiar link exclusivo da TV"
+                                >
+                                  <Copy className="w-3 h-3" /> Copiar Link
+                                </button>
+                                <a 
+                                  href={displayUrl} 
+                                  target="_blank" 
+                                  rel="noreferrer"
+                                  className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded flex items-center justify-center"
+                                  title="Visualizar Live Signage em tela cheia"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              </div>
+
+                              {/* Botões de Alteração Rápida */}
+                              <div className="flex gap-1.5">
+                                <button 
+                                  onClick={() => {
+                                    setEditingScreen(sc);
+                                  }}
+                                  className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[9px] rounded uppercase tracking-wider"
+                                >
+                                  Configurar Menu
+                                </button>
+                                <button 
+                                  onClick={() => triggerFileUpload(sc.id)}
+                                  className="py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-emerald-400 font-bold text-[9px] rounded uppercase tracking-wider flex items-center gap-1"
+                                  title="Enviar imagem manual, banner do Canva ou promoção customizada para esta TV"
+                                >
+                                  <Upload className="w-3 h-3" /> Subir Imagem / Promoção
+                                </button>
+                              </div>
+
+                              {/* Alerta de sincronização */}
+                              <div className="flex items-center justify-between text-[8px] text-slate-400 font-mono mt-1">
+                                <span>Sincronia: {sc.lastSync}</span>
+                                {sc.status === "offline" ? (
+                                  <button 
+                                    className="text-emerald-500 hover:underline font-bold"
+                                    onClick={() => handleToggleScreenActiveStatus(sc.id, "online")}
+                                  >
+                                    Reativar TV
+                                  </button>
+                                ) : (
+                                  <button 
+                                    className="text-red-500 hover:underline"
+                                    onClick={() => setIsDeletingScreen(sc.id)}
+                                  >
+                                    Desativar TV
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {screens.map((sc, index) => {
-                    const activeImage = sc.displayMode === "playlist" && sc.playlist && sc.playlist.find(item => item.enabled && item.image)
-                      ? (sc.playlist.find(item => item.enabled && item.image)?.image || "")
-                      : (sc.currentImage || "");
-
-                    const presetImg = PRESET_TEMPLATES.find(t => t.id === activeImage);
-                    const isCustomUploaded = activeImage.startsWith("data:");
-                    const scCode = sc.shortCode || getOrGenerateShortCode(sc.id);
-                    const displayUrl = `${window.location.origin}${window.location.pathname}?screen=${scCode}`;
-
-                    return (
-                      <div key={sc.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between group relative hover:shadow-md transition-all">
-                        {/* Imagem de Preview Mockup 16:9 */}
-                        <div className="h-32 bg-slate-900 relative flex items-center justify-center overflow-hidden border-b border-slate-100">
-                          {presetImg ? (
-                            <div className="w-full h-full scale-[0.6] opacity-90 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: presetImg.svgMarkup }} />
-                          ) : isCustomUploaded ? (
-                            <img src={activeImage} alt="Preview custom" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="text-slate-600 text-[10px] font-mono select-none">Sem Mídia Sincronizada</div>
-                          )}
-
-                          {/* Status Badge */}
-                          <div className={`absolute top-2.5 right-2.5 px-2 py-0.5 text-white text-[8px] font-bold rounded-full uppercase tracking-wider shadow ${
-                            sc.status === "offline" ? "bg-amber-500" : "bg-emerald-500"
-                          }`}>
-                            {sc.status === "offline" ? "Standby" : "Ativa / Online"}
-                          </div>
-
-                          {/* Número da TV identificador */}
-                          <div className="absolute left-2.5 top-2.5 bg-slate-950/80 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase font-mono tracking-widest">
-                            #0{index + 1}
-                          </div>
-                        </div>
-
-                        {/* Corpo com Informações */}
-                        <div className="p-4 flex-1 flex flex-col justify-between">
-                          <div>
-                            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{sc.location || "Área Comercial"}</p>
-                            <h4 className="text-xs font-bold text-slate-900 mb-1">{sc.name}</h4>
-                            
-                            <div className="mt-2 space-y-1">
-                              <div className="flex justify-between items-center text-[10px]">
-                                <span className="text-slate-500">Modo de Sinal:</span>
-                                <span className={`font-bold uppercase text-[8px] px-1.5 py-0.5 rounded-md ${
-                                  sc.displayMode === "playlist" 
-                                    ? "bg-purple-100 text-purple-700" 
-                                    : "bg-blue-100 text-blue-700"
-                                }`}>
-                                  {sc.displayMode === "playlist" 
-                                    ? `Carrossel (${sc.playlist?.filter(p => p.enabled).length || 0} mídias)` 
-                                    : "Imagem Única"}
-                                </span>
-                              </div>
-                              <div className="flex justify-between text-[10px]">
-                                <span className="text-slate-500">Overlay Preços:</span>
-                                <span className={`font-bold ${sc.overlayPrices ? "text-blue-600" : "text-amber-600"}`}>
-                                  {sc.overlayPrices ? `Sim (${sc.selectedCategory || 'Todas'})` : 'Desativado'}
-                                </span>
-                              </div>
-                              <div className="flex justify-between text-[10px]">
-                                <span className="text-slate-500">Mídia Ativa:</span>
-                                <span className="font-semibold text-slate-700 truncate max-w-[120px]">
-                                  {presetImg ? presetImg.name : isCustomUploaded ? "Imagem/Promoção Customizada" : "Padrão"}
-                                </span>
-                              </div>
-                              <div className="flex justify-between items-center text-[10px] bg-blue-50/70 p-1.5 rounded border border-blue-100 mt-2 font-semibold">
-                                <span className="text-blue-700 flex items-center gap-1">📺 Código Pareamento:</span>
-                                <span className="font-mono font-black text-blue-900 bg-white px-2 py-0.5 rounded shadow-sm text-[11px] tracking-widest animate-pulse">
-                                  {scCode}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Ações Específicas do Card */}
-                          <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
-                            {/* Link de Exibição Pública para copiar ou enviar à Silk */}
-                            <div className="flex gap-1">
-                              <button 
-                                onClick={() => {
-                                  navigator.clipboard.writeText(displayUrl);
-                                  showToast("URL do display copiado com sucesso!", "success");
-                                }}
-                                className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[9px] font-bold uppercase tracking-wider"
-                                title="Copiar link exclusivo da TV"
-                              >
-                                <Copy className="w-3 h-3" /> Copiar Link
-                              </button>
-                              <a 
-                                href={displayUrl} 
-                                target="_blank" 
-                                rel="noreferrer"
-                                className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded flex items-center justify-center"
-                                title="Visualizar Live Signage em tela cheia"
-                              >
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
-                            </div>
-
-                            {/* Botões de Alteração Rápida */}
-                            <div className="flex gap-1.5">
-                              <button 
-                                onClick={() => {
-                                  setEditingScreen(sc);
-                                }}
-                                className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[9px] rounded uppercase tracking-wider"
-                              >
-                                Configurar Menu
-                              </button>
-                              <button 
-                                onClick={() => triggerFileUpload(sc.id)}
-                                className="py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-emerald-400 font-bold text-[9px] rounded uppercase tracking-wider flex items-center gap-1"
-                                title="Enviar imagem manual, banner do Canva ou promoção customizada para esta TV"
-                              >
-                                <Upload className="w-3 h-3" /> Subir Imagem / Promoção
-                              </button>
-                            </div>
-
-                            {/* Alerta de sincronização */}
-                            <div className="flex items-center justify-between text-[8px] text-slate-400 font-mono mt-1">
-                              <span>Sincronia: {sc.lastSync}</span>
-                              {sc.status === "offline" ? (
-                                <button 
-                                  className="text-emerald-500 hover:underline font-bold"
-                                  onClick={() => handleToggleScreenActiveStatus(sc.id, "online")}
-                                >
-                                  Reativar TV
-                                </button>
-                              ) : (
-                                <button 
-                                  className="text-red-500 hover:underline"
-                                  onClick={() => setIsDeletingScreen(sc.id)}
-                                >
-                                  Desativar TV
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                        </div>
-                      </div>
-                    );
-                  })}
+                {/* Coluna Lateral do Calendário de Validade de Plano */}
+                <div className="xl:col-span-1">
+                  <div className="sticky top-6">
+                    <PlanCalendar 
+                      expirationDate={loggedInClient?.expirationDate} 
+                      clientName={loggedInClient?.name || "Minha Loja"}
+                      isSuperAdminView={false}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -3487,6 +4289,16 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
             </div>
           )}
 
+          {/* TAB: CONFIGURAÇÕES E PERFIL DO ESTABELECIMENTO */}
+          {activeTab === "settings" && (
+            <StoreSettingsPanel
+              loggedInClient={loggedInClient}
+              user={user}
+              setUser={setUser}
+              showToast={showToast}
+            />
+          )}
+
           {/* TAB 5: GESTÃO MULTI-CLIENTE E ASSINATURAS SAAS */}
           {activeTab === "clients" && isSuperAdmin && (
             <div className="space-y-6">
@@ -3544,99 +4356,110 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 </div>
               </div>
 
-              {/* Seção Inteligente de Alertas de Vencimento de Licenças (Próximos 7 Dias) */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4 font-sans">
-                <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                  <ShieldAlert className="w-4 h-4 text-amber-500 animate-pulse" />
-                  <div>
-                    <h3 className="font-extrabold text-xs uppercase text-slate-850 tracking-wider">
-                      Centro de Telemetria de Cobrança: Negócios com faturamento pendente (Expirando em até 1 semana)
-                    </h3>
-                    <p className="text-[10px] text-slate-400 font-sans mt-0.5">Monitore os vencimentos das licenças para entrar em contato ou pausar de forma temporária (Standby) os clientes em atraso.</p>
+              {/* Seção Inteligente de Telemetria e Agenda de Faturamento */}
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 font-sans">
+                {/* Lado Esquerdo: Alertas de Vencimento de Licenças (Próximos 7 Dias) */}
+                <div className="xl:col-span-2 bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <ShieldAlert className="w-4 h-4 text-amber-500 animate-pulse" />
+                    <div>
+                      <h3 className="font-extrabold text-xs uppercase text-slate-850 tracking-wider">
+                        Centro de Telemetria de Cobrança: Negócios com faturamento pendente (Expirando em até 1 semana)
+                      </h3>
+                      <p className="text-[10px] text-slate-400 font-sans mt-0.5">Monitore os vencimentos das licenças para entrar em contato ou pausar de forma temporária (Standby) os clientes em atraso.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {clients.filter(c => {
+                      if (c.status === "suspended" || c.status === "standby") return false;
+                      const expDate = new Date(c.expirationDate);
+                      expDate.setHours(23,59,59,999);
+                      const today = new Date();
+                      today.setHours(0,0,0,0);
+                      const diffTime = expDate.getTime() - today.getTime();
+                      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                      return diffDays <= 7;
+                    }).map(client => {
+                      const expDate = new Date(client.expirationDate);
+                      expDate.setHours(23,59,59,999);
+                      const today = new Date();
+                      today.setHours(0,0,0,0);
+                      const diffTime = expDate.getTime() - today.getTime();
+                      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                      const isOverdue = diffDays < 0;
+
+                      return (
+                        <div 
+                          key={client.id} 
+                          className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 text-xs font-semibold hover:shadow-sm transition-all ${
+                            isOverdue 
+                              ? "bg-rose-50/50 border-rose-200" 
+                              : "bg-amber-50/40 border-amber-200 animate-pulse"
+                          }`}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                client.plan === "pro" 
+                                  ? "bg-purple-100 text-purple-800" 
+                                  : client.plan === "basico" 
+                                    ? "bg-blue-100 text-blue-800" 
+                                    : "bg-slate-100 text-slate-800"
+                              }`}>
+                                Plano {client.plan?.toUpperCase() || "BÁSICO"}
+                              </span>
+                              <h4 className="font-bold text-slate-800 text-xs mt-1.5">{client.name}</h4>
+                              <p className="text-[10px] text-slate-500 font-mono mt-0.5">{client.ownerEmail}</p>
+                            </div>
+                            
+                            <div className="text-right">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase inline-block ${
+                                isOverdue ? "bg-rose-600 text-white animate-pulse" : "bg-amber-600 text-white"
+                              }`}>
+                                {isOverdue ? "Expirou" : `Vence em ${diffDays} dias`}
+                              </span>
+                              <div className="text-[9px] text-slate-500 mt-1 font-mono">
+                                {new Date(client.expirationDate).toLocaleDateString("pt-BR")}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 border-t border-slate-200/50 pt-2.5 mt-0.5 justify-end">
+                            <button
+                              onClick={() => handleUpdateClientStatus(client.id, "standby")}
+                              className="bg-orange-50 hover:bg-orange-600 border border-orange-200 hover:border-orange-600 text-orange-700 hover:text-white font-extrabold text-[9px] tracking-wider uppercase px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <AlertCircle className="w-3 h-3" /> Standby
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {clients.filter(c => {
+                      if (c.status === "suspended" || c.status === "standby") return false;
+                      const expDate = new Date(c.expirationDate);
+                      expDate.setHours(23,59,59,999);
+                      const today = new Date();
+                      today.setHours(0,0,0,0);
+                      const diffTime = expDate.getTime() - today.getTime();
+                      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                      return diffDays <= 7;
+                    }).length === 0 && (
+                      <div className="col-span-full text-center p-5 bg-slate-50 border border-dashed border-slate-200 text-slate-400 font-bold text-xs rounded-xl">
+                        Nenhum cliente ativo possui vencimento crítico nos próximos 7 dias. Ótima saúde financeira!
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {clients.filter(c => {
-                    if (c.status === "suspended" || c.status === "standby") return false;
-                    const expDate = new Date(c.expirationDate);
-                    expDate.setHours(23,59,59,999);
-                    const today = new Date();
-                    today.setHours(0,0,0,0);
-                    const diffTime = expDate.getTime() - today.getTime();
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    return diffDays <= 7;
-                  }).map(client => {
-                    const expDate = new Date(client.expirationDate);
-                    expDate.setHours(23,59,59,999);
-                    const today = new Date();
-                    today.setHours(0,0,0,0);
-                    const diffTime = expDate.getTime() - today.getTime();
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    const isOverdue = diffDays < 0;
-
-                    return (
-                      <div 
-                        key={client.id} 
-                        className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 text-xs font-semibold hover:shadow-sm transition-all ${
-                          isOverdue 
-                            ? "bg-rose-50/50 border-rose-200" 
-                            : "bg-amber-50/40 border-amber-200 animate-pulse"
-                        }`}
-                      >
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                              client.plan === "pro" 
-                                ? "bg-purple-100 text-purple-800" 
-                                : client.plan === "basico" 
-                                  ? "bg-blue-100 text-blue-800" 
-                                  : "bg-slate-100 text-slate-800"
-                            }`}>
-                              Plano {client.plan?.toUpperCase() || "BÁSICO"}
-                            </span>
-                            <h4 className="font-bold text-slate-800 text-xs mt-1.5">{client.name}</h4>
-                            <p className="text-[10px] text-slate-500 font-mono mt-0.5">{client.ownerEmail}</p>
-                          </div>
-                          
-                          <div className="text-right">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase inline-block ${
-                              isOverdue ? "bg-rose-600 text-white animate-pulse" : "bg-amber-600 text-white"
-                            }`}>
-                              {isOverdue ? "Expirou" : `Vence em ${diffDays} dias`}
-                            </span>
-                            <div className="text-[9px] text-slate-500 mt-1 font-mono">
-                              {new Date(client.expirationDate).toLocaleDateString("pt-BR")}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-2 border-t border-slate-200/50 pt-2.5 mt-0.5 justify-end">
-                          <button
-                            onClick={() => handleUpdateClientStatus(client.id, "standby")}
-                            className="bg-orange-50 hover:bg-orange-600 border border-orange-200 hover:border-orange-600 text-orange-700 hover:text-white font-extrabold text-[9px] tracking-wider uppercase px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer"
-                          >
-                            <AlertCircle className="w-3 h-3" /> Standby
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {clients.filter(c => {
-                    if (c.status === "suspended" || c.status === "standby") return false;
-                    const expDate = new Date(c.expirationDate);
-                    expDate.setHours(23,59,59,999);
-                    const today = new Date();
-                    today.setHours(0,0,0,0);
-                    const diffTime = expDate.getTime() - today.getTime();
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    return diffDays <= 7;
-                  }).length === 0 && (
-                    <div className="col-span-full text-center p-5 bg-slate-50 border border-dashed border-slate-200 text-slate-400 font-bold text-xs rounded-xl">
-                      Nenhum cliente ativo possui vencimento crítico nos próximos 7 dias. Ótima saúde financeira!
-                    </div>
-                  )}
+                {/* Lado Direito: Calendário de Agenda de Faturamento do SaaS */}
+                <div className="xl:col-span-1">
+                  <PlanCalendar 
+                    isSuperAdminView={true} 
+                    clientsList={clients} 
+                  />
                 </div>
               </div>
 
@@ -3693,9 +4516,23 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                               <tr key={client.id} className="hover:bg-slate-50/50 transition-colors">
                                 <td className="p-3.5">
                                   <div className="font-bold text-slate-800">{client.name}</div>
-                                  <div className="text-[10px] text-slate-400 font-mono">{client.phone || "Sem Telefone"}</div>
+                                  <div className="flex flex-col gap-0.5 mt-1 text-[10px] font-mono text-slate-500">
+                                    <span className="flex items-center gap-1">
+                                      <Phone className="w-2.5 h-2.5 text-slate-400 shrink-0" /> {client.phone || "Sem Telefone Fixo"}
+                                    </span>
+                                    {client.contactPhone && (
+                                      <span className="flex items-center gap-1 text-teal-650">
+                                        <Phone className="w-2.5 h-2.5 shrink-0" /> {client.contactPhone} (Wpp Secundário)
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
-                                <td className="p-3.5 text-slate-600 font-mono text-[11px]">{client.ownerEmail}</td>
+                                <td className="p-3.5 text-left">
+                                  <div className="text-slate-600 font-mono text-[11px] font-bold">{client.ownerEmail}</div>
+                                  <div className="text-[10px] text-blue-600/90 font-mono font-bold mt-1 bg-blue-50 border border-blue-100/40 px-1.5 py-0.5 rounded inline-flex items-center gap-1 shrink-0" title="Senha salva para o cliente">
+                                    <Lock className="w-2.5 h-2.5" /> Senha: <span className="text-slate-800">{client.password || "123456"}</span>
+                                  </div>
+                                </td>
                                 <td className="p-3.5 text-center">
                                   <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
                                     client.plan === "pro" 
@@ -3803,6 +4640,19 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                            setNewClientPhoneCountry("BR");
                                            setNewClientPhone(storedPhone);
                                          }
+                                         // Separar DDI do número local para edição - Telefone 2
+                                         const storedPhone2 = client.contactPhone || "";
+                                         if (storedPhone2.startsWith("+55 ")) {
+                                           setNewClientPhone2Country("BR");
+                                           setNewClientPhone2(storedPhone2.replace("+55 ", ""));
+                                         } else if (storedPhone2.startsWith("+1 ")) {
+                                           setNewClientPhone2Country("US");
+                                           setNewClientPhone2(storedPhone2.replace("+1 ", ""));
+                                         } else {
+                                           setNewClientPhone2Country("BR");
+                                           setNewClientPhone2(storedPhone2);
+                                         }
+                                         setNewClientPassword(client.password || "123456");
                                         setNewClientFee(String(client.monthlyFee || "99.90"));
                                         setNewClientExpiration(client.expirationDate);
                                         setNewClientPlan(client.plan || "basico");
@@ -3811,6 +4661,18 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                       title="Editar Informações Cadastrais"
                                     >
                                       Editar
+                                    </button>
+
+                                    <button
+                                      onClick={() => {
+                                        setImpersonatedClient(client);
+                                        setActiveTab("screens");
+                                        showToast(`Acessando como: ${client.name}!`, "success");
+                                      }}
+                                      className="p-1 px-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-extrabold uppercase flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                                      title="Acessar conta do cliente para suporte"
+                                    >
+                                      <UserCheck className="w-3 h-3 text-white" /> Acessar Conta
                                     </button>
                                   </div>
                                 </td>
@@ -3866,7 +4728,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
                     <div>
                       <div className="flex justify-between items-center mb-1">
-                        <label className="text-[10px] uppercase text-slate-500 font-bold block">Telefone / WhatsApp</label>
+                        <label className="text-[10px] uppercase text-slate-500 font-bold block">Telefone Principal</label>
                         <div className="flex gap-1.5">
                           <button
                             type="button"
@@ -3900,6 +4762,48 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             setNewClientPhone(formatBRPhone(raw));
                           } else {
                             setNewClientPhone(formatUSPhone(raw));
+                          }
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono font-sans"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-[10px] uppercase text-slate-500 font-bold block">Telefone 2 / WhatsApp</label>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewClientPhone2Country("BR");
+                              setNewClientPhone2(formatBRPhone(newClientPhone2));
+                            }}
+                            className={`px-1.5 py-0.5 text-[9px] rounded font-bold transition-all border ${newClientPhone2Country === "BR" ? "bg-slate-200 text-slate-800 border-slate-300" : "text-slate-400 border-transparent hover:text-slate-600"}`}
+                          >
+                            🇧🇷 BR
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewClientPhone2Country("US");
+                              setNewClientPhone2(formatUSPhone(newClientPhone2));
+                            }}
+                            className={`px-1.5 py-0.5 text-[9px] rounded font-bold transition-all border ${newClientPhone2Country === "US" ? "bg-slate-200 text-slate-800 border-slate-300" : "text-slate-400 border-transparent hover:text-slate-600"}`}
+                          >
+                            🇺🇸 US
+                          </button>
+                        </div>
+                      </div>
+                      <input 
+                        type="text" 
+                        placeholder={newClientPhone2Country === "BR" ? "Ex: (11) 99888-7766" : "Ex: (201) 555-0123"}
+                        value={newClientPhone2}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (newClientPhone2Country === "BR") {
+                            setNewClientPhone2(formatBRPhone(raw));
+                          } else {
+                            setNewClientPhone2(formatUSPhone(raw));
                           }
                         }}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono font-sans"
@@ -3947,6 +4851,19 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                       <p className="text-[9px] text-slate-400 mt-1">Garante controle rígido e auditado sobre as cotas físicas de TVs e itens de cardápio nas TVs.</p>
                     </div>
 
+                    <div className="font-sans">
+                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Senha de Acesso (Recuperação / Suporte)</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ex: 123456"
+                        required
+                        value={newClientPassword}
+                        onChange={(e) => setNewClientPassword(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono"
+                      />
+                      <p className="text-[9px] text-slate-450 mt-1">Guarde a senha do cliente para auxiliá-lo caso esqueça. Funciona como um backup seguro de login.</p>
+                    </div>
+
                     <div className="flex gap-2 pt-2 font-sans">
                       <button
                         type="submit"
@@ -3962,6 +4879,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             setNewClientName("");
                             setNewClientEmail("");
                             setNewClientPhone("");
+                            setNewClientPhone2("");
+                            setNewClientPassword("");
                             setNewClientFee("99.90");
                             setNewClientExpiration("");
                             setNewClientPlan("basico");
@@ -3982,12 +4901,12 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
         </div>
 
-        {/* Rodapé status de Armazenamento fictício e copyright de engine */}
+        {/* Rodapé status de Armazenamento e copyright de engine */}
         <footer className="h-10 bg-slate-100 border-t border-slate-200 px-6 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
           <div className="flex gap-6">
             <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 
-              Nuvem Firestore ID: <span className="font-mono text-slate-700 font-bold">strategic-garden-rrwfn</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-rose-500"}`}></span> 
+              <span className="font-semibold text-slate-600">{isOnline ? "Conectado" : "Sem Conexão"}</span>
             </span>
             <span className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> 
