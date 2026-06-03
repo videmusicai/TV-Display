@@ -1279,9 +1279,23 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
             key={activeImageToShow}
           />
         ) : (
-          <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center text-slate-500">
-            <Tv className="w-16 h-16 opacity-30 mb-2" />
-            <p className="text-xs tracking-wider font-mono">NENHUMA IMAGEM OU VÍDEO ENVIADO PARA ESTA TELA</p>
+          <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center text-white relative p-6">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 blur-[130px] rounded-full pointer-events-none" />
+            <div className="relative z-10 flex flex-col items-center text-center">
+              <div className="relative flex items-center justify-center w-36 h-36 mb-6">
+                <div className="absolute inset-0 bg-blue-500/15 rounded-full animate-pulse opacity-40" />
+                <VitrionLogo className="w-24 h-24 relative z-10 drop-shadow-[0_0_25px_rgba(56,189,248,0.35)]" />
+              </div>
+              <h1 className="text-2xl font-black uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400 leading-none">
+                Vitrion
+              </h1>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.4em] leading-none mt-2">
+                Digital Display
+              </span>
+              <p className="text-xs text-slate-400 mt-6 max-w-xs leading-relaxed font-semibold">
+                Aguardando envio de mídias ou ativação de playlist no Painel Vitrion
+              </p>
+            </div>
           </div>
         )}
       </div>
@@ -1825,7 +1839,9 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     setAuthError("");
     setAuthLoading(true);
     try {
-      const mockUid = `usr_${Math.random().toString(36).substring(2, 11)}`;
+      // Cria um UID estável e determinístico a partir do e-mail digitado, evitando perda de dados
+      const safeEmailPrefix = formattedEmail.replace(/[^a-zA-Z0-9]/g, "_");
+      const mockUid = `usr_${safeEmailPrefix}`;
       const mockUser = {
         uid: mockUid,
         email: formattedEmail,
@@ -2768,7 +2784,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         name: name,
         location: "Nova Área Comercial",
         status: "online",
-        currentImage: "chalk-bakery",
+        currentImage: "",
         aspectRatio: "16:9",
         lastSync: "Criada agora",
         overlayPrices: false,
@@ -2777,8 +2793,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         displayMode: "single",
         shortCode: shortCode,
         playlist: [
-          { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
-          { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+          { id: "slot-1", image: "", duration: 10, enabled: false },
+          { id: "slot-2", image: "", duration: 10, enabled: false },
           { id: "slot-3", image: "", duration: 10, enabled: false },
           { id: "slot-4", image: "", duration: 10, enabled: false }
         ]
@@ -3074,8 +3090,19 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               </div>
 
               {authError && (
-                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs text-center font-medium leading-relaxed">
-                  {authError}
+                <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-slate-300 text-xs leading-relaxed space-y-2 font-sans">
+                  <p className="font-bold text-red-400 uppercase tracking-wider text-center text-[11px]">
+                    ⚠️ Restrição de Sandbox / Iframe do Google Auth
+                  </p>
+                  <p className="text-[10.5px] text-slate-300">
+                    O login nativo com Google requer que o endereço URL atual esteja pré-autorizado no console do Firebase. Como o AI Studio roda o app em um Visualizador Provisório seguro (Iframe), o ambiente do navegador bloqueia a abertura do pop-up.
+                  </p>
+                  <div className="bg-slate-950/70 rounded-lg p-2 text-[10px] font-mono border border-slate-800 text-slate-400 break-all leading-normal">
+                    <strong>Erro Técnico:</strong> {authError}
+                  </div>
+                  <p className="text-[10.5px] font-bold text-blue-400">
+                    💡 COMO TESTAR AGORA: Insira seu e-mail de teste no campo "Acesso Direto Seguro" logo abaixo! O sistema criará um perfil estável e permanente para salvar suas TVs e produtos normalmente.
+                  </p>
                 </div>
               )}
 
@@ -3485,15 +3512,6 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               </button>
               
               <button 
-                onClick={() => setActiveTab("products")}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "products" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
-                id="tab-products"
-              >
-                <DollarSign className="w-4 h-4" />
-                Tabela de Preços
-              </button>
-
-              <button 
                 onClick={() => setActiveTab("promotions")}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${activeTab === "promotions" ? "bg-blue-600 text-white" : "hover:bg-slate-800 text-slate-400 hover:text-white"}`}
                 id="tab-promotions"
@@ -3743,7 +3761,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             ) : isCustomUploaded ? (
                               <img src={activeImage} alt="Preview custom" className="w-full h-full object-cover" />
                             ) : (
-                              <div className="text-slate-600 text-[10px] font-mono select-none">Sem Mídia Sincronizada</div>
+                              <div className="flex flex-col items-center justify-center p-4 gap-1 select-none text-slate-500">
+                                <VitrionLogo className="w-8 h-8 opacity-40 filter drop-shadow-[0_2px_4px_rgba(56,189,248,0.15)] animate-pulse" />
+                                <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest mt-1">Vitrion Display</span>
+                              </div>
                             )}
 
                             {/* Status Badge */}
@@ -3843,24 +3864,49 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                 </button>
                               </div>
 
-                              {/* Alerta de sincronização */}
-                              <div className="flex items-center justify-between text-[8px] text-slate-400 font-mono mt-1">
+                              {/* Alerta de sincronização e controles rápidos de status/exclusão */}
+                              <div className="flex items-center justify-between text-[8px] text-slate-400 font-mono mt-2 pt-2 border-t border-slate-100/60 font-semibold">
                                 <span>Sincronia: {sc.lastSync}</span>
-                                {sc.status === "offline" ? (
+                                <div className="flex items-center gap-2">
+                                  {sc.status === "offline" ? (
+                                    <button 
+                                      className="text-emerald-500 hover:underline font-bold cursor-pointer"
+                                      onClick={() => handleToggleScreenActiveStatus(sc.id, "online")}
+                                      title="Reativar TV"
+                                    >
+                                      Reativar TV
+                                    </button>
+                                  ) : (
+                                    <button 
+                                      className="text-amber-500 hover:underline font-bold cursor-pointer"
+                                      onClick={() => handleToggleScreenActiveStatus(sc.id, "offline")}
+                                      title="Colocar em Standby"
+                                    >
+                                      Standby
+                                    </button>
+                                  )}
+                                  <span className="text-slate-200">|</span>
                                   <button 
-                                    className="text-emerald-500 hover:underline font-bold"
-                                    onClick={() => handleToggleScreenActiveStatus(sc.id, "online")}
+                                    className="text-red-500 hover:text-red-700 font-bold flex items-center gap-0.5 cursor-pointer"
+                                    title="Remover TV permanentemente"
+                                    onClick={() => {
+                                      requestConfirmation(
+                                        "Confirmar Remoção da TV",
+                                        `Tem certeza que deseja remover permanentemente a TV "${sc.name}"? Esta ação não pode ser desfeita e desconectará o aparelho associado do banco de dados.`,
+                                        async () => {
+                                          try {
+                                            await deleteDoc(doc(db, "screens", sc.id));
+                                            showToast("TV excluída definitivamente do sistema.", "success");
+                                          } catch (err: unknown) {
+                                            handleFirestoreError(err, OperationType.DELETE, `screens/${sc.id}`);
+                                          }
+                                        }
+                                      );
+                                    }}
                                   >
-                                    Reativar TV
+                                    <Trash2 className="w-2.5 h-2.5" /> Remover
                                   </button>
-                                ) : (
-                                  <button 
-                                    className="text-red-500 hover:underline"
-                                    onClick={() => setIsDeletingScreen(sc.id)}
-                                  >
-                                    Desativar TV
-                                  </button>
-                                )}
+                                </div>
                               </div>
                             </div>
 
