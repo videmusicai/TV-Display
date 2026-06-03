@@ -35,7 +35,9 @@ import {
   User,
   MapPin,
   Phone,
-  Mail
+  Mail,
+  Chrome,
+  Globe
 } from "lucide-react";
 import { 
   collection, 
@@ -54,6 +56,7 @@ import { signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPo
 import { db, auth } from "./firebase";
 import { handleFirestoreError, OperationType } from "./firebaseError";
 import { PRESET_TEMPLATES, MenuTemplate } from "./templates";
+import { signInWithGoogle, signOutUser } from "./auth-service";
 
 // Funções Auxiliares de Formatação de Telefone para BR e US
 export function formatBRPhone(value: string): string {
@@ -184,6 +187,15 @@ export const generateUniqueShortCode = (existingScreens: ScreenData[]): string =
   }
   return code;
 };
+
+export function getScreenDisplayNumber(name: string, index: number): string {
+  const match = name.match(/\d+/);
+  if (match) {
+    const num = parseInt(match[0], 10);
+    return num.toString();
+  }
+  return (index + 1).toString();
+}
 
 // --- INTERACTIVE PLAN CALENDAR WIDGET ---
 interface PlanCalendarProps {
@@ -1486,8 +1498,18 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [authStoreName, setAuthStoreName] = useState("");
   const [authPhone, setAuthPhone] = useState("");
   const [authPhoneCountry, setAuthPhoneCountry] = useState<"BR" | "US">("BR");
+  const [authAddress, setAuthAddress] = useState("");
+  const [authCity, setAuthCity] = useState("");
+  const [regContactEmail, setRegContactEmail] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [instantEmail, setInstantEmail] = useState("");
+
+  useEffect(() => {
+    if (user?.email && !regContactEmail) {
+      setRegContactEmail(user.email);
+    }
+  }, [user, regContactEmail]);
 
   // Estados do modal do Administrador
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
@@ -1496,6 +1518,92 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [adminModalLoading, setAdminModalLoading] = useState(false);
 
   // Estados específicos para o modo Pareamento
+  const handleCompleteRegistration = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setAuthError("");
+    setAuthLoading(true);
+
+    if (!authStoreName.trim()) {
+      showToast("Por favor, preencha o Nome do Estabelecimento.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    if (!authPhone.trim()) {
+      showToast("Por favor, preencha o WhatsApp ou Telefone.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    if (!authAddress.trim()) {
+      showToast("Por favor, preencha o Endereço.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    if (!authCity.trim()) {
+      showToast("Por favor, preencha a Cidade.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    if (!regContactEmail.trim() || !regContactEmail.includes("@")) {
+      showToast("Por favor, insira um E-mail de contato válido.", "error");
+      setAuthLoading(false);
+      return;
+    }
+
+    try {
+      const cliId = `client_${user.uid}`;
+      const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 mês de testes grátis!
+      const autoCountry = authPhoneCountry === "BR" ? "Brasil" : "Estados Unidos";
+      
+      await setDoc(doc(db, "clients", cliId), {
+        id: cliId,
+        name: authStoreName,
+        ownerEmail: user.email || "",
+        contactEmail: regContactEmail.trim().toLowerCase(),
+        phone: authPhone ? (authPhoneCountry === "BR" ? `+55 ${authPhone}` : `+1 ${authPhone}`) : "",
+        contactPhone: authPhone ? (authPhoneCountry === "BR" ? `+55 ${authPhone}` : `+1 ${authPhone}`) : "",
+        address: authAddress.trim(),
+        city: authCity.trim(),
+        country: autoCountry,
+        pais: autoCountry,
+        monthlyFee: 99.90,
+        expirationDate: expiry,
+        status: "pending", // Em análise pelo Administrador (permite teste livre)
+        plan: "basico", // Plano básico padrão para novos cadastros (suporta 4 TVs)
+        createdAt: new Date().toISOString()
+      }, { merge: true });
+
+      // Also create a default screen for them so they can immediately see it!
+      await setDoc(doc(db, "screens", `tv_${user.uid}`), {
+        id: `tv_${user.uid}`,
+        name: "TV Recepção - Principal",
+        location: authStoreName,
+        aspectRatio: "16:9",
+        status: "online",
+        currentImage: "chalk-bakery",
+        lastSync: "Criada agora",
+        overlayPrices: false,
+        selectedCategory: "Todas",
+        clientId: cliId,
+        displayMode: "single",
+        shortCode: getOrGenerateShortCode(`tv_${user.uid}`),
+        playlist: [
+          { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
+          { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+          { id: "slot-3", image: "", duration: 10, enabled: false },
+          { id: "slot-4", image: "", duration: 10, enabled: false }
+        ]
+      }, { merge: true });
+
+      showToast(`Seu estabelecimento foi cadastrado com sucesso! Bem-vindo!`, "success");
+    } catch (err: any) {
+      console.error("Cadastro erro:", err);
+      showToast("Não foi possível persistir no banco. Tentando de novo.", "error");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const [pairingCode, setPairingCode] = useState("");
   const [pairingLoading, setPairingLoading] = useState(false);
   const [pairingError, setPairingError] = useState("");
@@ -1684,6 +1792,55 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       setAdminModalPassword("");
     } finally {
       setAdminModalLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      const loggedUser = await signInWithGoogle();
+      if (loggedUser) {
+        setUser(loggedUser);
+        showToast("Painel Vitrion acessado com o Google!", "success");
+      }
+    } catch (err: any) {
+      console.error("Erro no login com Google:", err);
+      if (err.code !== "auth/popup-closed-by-user") {
+        setAuthError(`Erro no login com Google: ${err.message || err.code || err}`);
+        showToast("Falha no login com Google. Tente preencher o campo abaixo ou abrir em uma nova guia.", "error");
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleInstantEmailSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const formattedEmail = instantEmail.trim().toLowerCase();
+    if (!formattedEmail || !formattedEmail.includes("@")) {
+      showToast("Por favor, digite um e-mail válido com @.", "error");
+      return;
+    }
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      const mockUid = `usr_${Math.random().toString(36).substring(2, 11)}`;
+      const mockUser = {
+        uid: mockUid,
+        email: formattedEmail,
+        isAnonymous: false,
+        emailVerified: true
+      };
+      // Save to localStorage so it stays active
+      localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
+      setUser(mockUser);
+      showToast("Conectado com sucesso pelo e-mail!", "success");
+    } catch (err: any) {
+      console.error("Erro no login instantâneo:", err);
+      showToast("Ocorreu um erro ao conectar com o e-mail.", "error");
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -1910,13 +2067,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
           showToast(`Painel Vitrion acessado com sucesso!`, "success");
         }
       } else {
-        // Sign up and create new customer account
-        if (!authStoreName.trim()) {
-          setAuthError("Por favor, preencha o Nome do Estabelecimento.");
-          setAuthLoading(false);
-          return;
-        }
-
+        // Sign up and create new customer account (auth only)
         let cred;
         try {
           cred = await createUserWithEmailAndPassword(auth, formattedEmail, authPassword);
@@ -1941,48 +2092,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         }
 
         if (cred && cred.user) {
-          // Logged in user!
-          // Now create their SaaS client record in database
-          const cliId = `client_${cred.user.uid}`;
-          const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 mês de testes grátis!
-          
-          await setDoc(doc(db, "clients", cliId), {
-            id: cliId,
-            name: authStoreName,
-            ownerEmail: formattedEmail,
-            phone: authPhone ? (authPhoneCountry === "BR" ? `+55 ${authPhone}` : `+1 ${authPhone}`) : "",
-            contactPhone: authPhone ? (authPhoneCountry === "BR" ? `+55 ${authPhone}` : `+1 ${authPhone}`) : "",
-            monthlyFee: 99.90,
-            expirationDate: expiry,
-            status: "pending", // Em análise pelo Administrador
-            plan: "basico", // Plano básico padrão para novos cadastros (suporta 4 TVs)
-            createdAt: new Date().toISOString()
-          });
-
-          // Also create a default screen for them so they can immediately see it!
-          await setDoc(doc(db, "screens", `tv_${cred.user.uid}`), {
-            id: `tv_${cred.user.uid}`,
-            name: "TV Recepção - Principal",
-            location: authStoreName,
-            aspectRatio: "16:9",
-            status: "online",
-            currentImage: "chalk-bakery",
-            lastSync: "Criada agora",
-            overlayPrices: false,
-            selectedCategory: "Todas",
-            clientId: cliId,
-            displayMode: "single",
-            shortCode: getOrGenerateShortCode(`tv_${cred.user.uid}`),
-            playlist: [
-              { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
-              { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
-              { id: "slot-3", image: "", duration: 10, enabled: false },
-              { id: "slot-4", image: "", duration: 10, enabled: false }
-            ]
-          });
-
           setUser(cred.user);
-          showToast(`Sua conta e TV foram registradas com sucesso!`, "success");
+          showToast(`Conta criada com sucesso! Insira agora os dados do seu estabelecimento.`, "success");
         }
       }
     } catch (err: any) {
@@ -2541,79 +2652,6 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     };
   }, []);
 
-  // 3. Inicializa os dados padrões se o Firestore estiver zerado
-  const handleInitializeDefaults = async () => {
-    try {
-      const batch = writeBatch(db);
-      const currentId = getCurrentClientId();
-
-      // Default Screens
-      const defaultScreensRaw = [
-        { suffix: "1", name: "Tabela de Pães - Principal", location: "Balcão Administrativo", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Padaria" },
-        { suffix: "2", name: "Promocional Doces - Vitrina", location: "Vitrine Lateral", status: "online", currentImage: "pastel-sweet", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Doce" },
-        { suffix: "3", name: "Cafés Exclusivos & Quentes", location: "Entrada Próximo Caixas", status: "online", currentImage: "cozy-coffee", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Café" },
-        { suffix: "4", name: "Brunch e Almoço do Dia", location: "Bistrô Externo", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: true, selectedCategory: "Lanches" },
-        { suffix: "5", name: "Happy Hour & Promoções", location: "Mesas do Deck", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" },
-        { suffix: "6", name: "Avisos Gerais & Pix", location: "Frente do Caixa 2", status: "online", currentImage: "modern-brunch", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" },
-        { suffix: "7", name: "Boas-Vindas Institucional", location: "Fachada de Entrada", status: "online", currentImage: "chalk-bakery", aspectRatio: "16:9", lastSync: "Pronto", overlayPrices: false, selectedCategory: "Todas" }
-      ];
-
-      for (const dScreen of defaultScreensRaw) {
-        const docId = `tela-${currentId}-${dScreen.suffix}`;
-        const sCode = getOrGenerateShortCode(docId);
-        const completeScreen: ScreenData = {
-          id: docId,
-          name: dScreen.name,
-          location: dScreen.location,
-          status: dScreen.status as "online" | "offline",
-          currentImage: dScreen.currentImage,
-          aspectRatio: dScreen.aspectRatio as "16:9" | "9:16",
-          lastSync: dScreen.lastSync,
-          overlayPrices: dScreen.overlayPrices,
-          selectedCategory: dScreen.selectedCategory,
-          clientId: currentId,
-          displayMode: "single",
-          playlist: [],
-          shortCode: sCode
-        };
-        const docRef = doc(db, "screens", docId);
-        batch.set(docRef, completeScreen);
-      }
-
-      // Default Products
-      const defaultProductsRaw = [
-        { suffix: "p1", name: "Pão Francês Fresquinho (kg)", price: 14.90, category: "Padaria", available: true },
-        { suffix: "p2", name: "Croissant Folhado Clássico", price: 8.50, category: "Padaria", available: true },
-        { suffix: "p3", name: "Pão de Queijo Cascudo (un)", price: 4.50, category: "Padaria", available: true },
-        { suffix: "p4", name: "Sonho Tradicional de Creme", price: 7.90, category: "Doce", available: true },
-        { suffix: "p5", name: "Fatia Bolo Triplo Chocolate", price: 12.00, category: "Doce", available: true },
-        { suffix: "p6", name: "Café Expresso Intensidade 8", price: 5.50, category: "Café", available: true },
-        { suffix: "p7", name: "Caffè Latte Cremoso Médio", price: 7.90, category: "Café", available: true },
-        { suffix: "p8", name: "Sanduíche Panini de Presunto e Queijo", price: 15.90, category: "Lanches", available: true }
-      ];
-
-      for (const dProd of defaultProductsRaw) {
-        const docId = `prod-${currentId}-${dProd.suffix}`;
-        const completeProduct: ProductData = {
-          id: docId,
-          name: dProd.name,
-          price: dProd.price,
-          category: dProd.category,
-          available: dProd.available,
-          clientId: currentId
-        };
-        const docRef = doc(db, "products", docId);
-        batch.set(docRef, completeProduct);
-      }
-
-      await batch.commit();
-      showToast("O sistema foi redefinido e povoado com 7 TVs prontas e um cardápio de padaria rústica!", "success");
-    } catch (err: unknown) {
-      console.error("Erro ao inicializar:", err);
-      showToast(`Erro ao redefinir base: ${err instanceof Error ? err.message : String(err)}`, "error");
-    }
-  };
-
   // 4. CADASTRA / ATUALIZA PRODUTOS
   const handleSaveProduct = async (e: FormEvent) => {
     e.preventDefault();
@@ -2945,28 +2983,12 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 setPairingError("");
               }}
               className={`flex-1 py-2 text-[10px] font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer ${
-                authMode === "login"
+                authMode === "login" || authMode === "signup"
                   ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              Entrar
-            </button>
-            <button
-              type="button"
-              id="tab-auth-signup"
-              onClick={() => {
-                setAuthMode("signup");
-                setAuthError("");
-                setPairingError("");
-              }}
-              className={`flex-1 py-2 text-[10px] font-bold rounded-lg transition-all uppercase tracking-wider cursor-pointer ${
-                authMode === "signup"
-                  ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              Criar Conta
+              Entrar / Cadastrar
             </button>
             <button
               type="button"
@@ -3041,145 +3063,81 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               </button>
             </form>
           ) : (
-            <form onSubmit={handleAuthSubmit} className="space-y-4">
-              {authMode === "signup" && (
-                <div>
-                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Nome do Estabelecimento / Loja</label>
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                      <Utensils className="w-4 h-4" />
-                    </span>
-                    <input
-                      type="text"
-                      required
-                      value={authStoreName}
-                      onChange={(e) => setAuthStoreName(e.target.value)}
-                      placeholder="ex: Padaria Colonial, Cafeteria do Bairro"
-                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">
-                  {authMode === "signup" ? "Escolha seu Nome de Usuário" : "Seu Nome de Usuário (Login)"}
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                    <UserCheck className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="text"
-                    required
-                    value={authEmail}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val.includes("@")) {
-                        setAuthEmail(val.trim());
-                      } else {
-                        setAuthEmail(val.toLowerCase().replace(/[^a-z0-9_]/g, ""));
-                      }
-                    }}
-                    placeholder={authMode === "signup" ? "ex: padariacentral" : "Seu usuário"}
-                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600 font-mono"
-                  />
-                </div>
-                {authMode === "signup" && (
-                  <p className="text-[9px] text-slate-500 mt-1">
-                    Não precisa de e-mail! Escolha um nome exclusivo (apenas letras minúsculas, números e sublinhados).
-                  </p>
-                )}
+            <div className="space-y-4 py-2 font-sans">
+              <div className="text-center space-y-1 my-3">
+                <p className="text-slate-300 text-xs leading-relaxed font-semibold">
+                  Acesse sua vitrine digital e área administrativa utilizando sua conta do Google (Gmail).
+                </p>
+                <p className="text-[9px] text-blue-400 uppercase tracking-widest font-black">
+                  Conexão Automática e Segura
+                </p>
               </div>
 
-              <div>
-                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Senha Secreta</label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                    <Lock className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    placeholder="Mínimo de 6 caracteres"
-                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
-                  />
-                </div>
-              </div>
-
-              {authMode === "signup" && (
-                <div>
-                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">WhatsApp / Telefone (Opcional)</label>
-                  <div className="relative flex items-center">
-                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none z-10">
-                      <Megaphone className="w-4 h-4" />
-                    </span>
-                    <div className="absolute right-3 flex items-center gap-1.5 h-full z-10">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAuthPhoneCountry("BR");
-                          setAuthPhone(formatBRPhone(authPhone));
-                        }}
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all ${authPhoneCountry === "BR" ? "bg-blue-600/35 text-blue-300 border border-blue-500/40" : "text-slate-500 hover:text-slate-300"}`}
-                        title="Brasil"
-                      >
-                        🇧🇷
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAuthPhoneCountry("US");
-                          setAuthPhone(formatUSPhone(authPhone));
-                        }}
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all ${authPhoneCountry === "US" ? "bg-blue-600/35 text-blue-300 border border-blue-500/40" : "text-slate-500 hover:text-slate-300"}`}
-                        title="United States"
-                      >
-                        🇺🇸
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      value={authPhone}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        if (authPhoneCountry === "BR") {
-                          setAuthPhone(formatBRPhone(raw));
-                        } else {
-                          setAuthPhone(formatUSPhone(raw));
-                        }
-                      }}
-                      placeholder={authPhoneCountry === "BR" ? "ex: (11) 99999-9999" : "ex: (201) 555-0123"}
-                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-24 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600 font-mono"
-                    />
-                  </div>
+              {authError && (
+                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs text-center font-medium leading-relaxed">
+                  {authError}
                 </div>
               )}
 
               <button
-                type="submit"
+                type="button"
+                onClick={handleGoogleLogin}
                 disabled={authLoading}
-                className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-blue-600/10 flex items-center justify-center gap-2 mt-4 cursor-pointer"
+                className="w-full py-3 px-4 bg-white hover:bg-slate-100 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-3 cursor-pointer border border-slate-800/20"
               >
                 {authLoading ? (
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span className="w-4 h-4 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" />
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4" />
-                    {authMode === "login" ? "Acessar Meu Painel" : "Criar Meu Acesso SaaS"}
+                    <Chrome className="w-4.5 h-4.5 text-blue-600 shrink-0" />
+                    <span>Acessar com o Google (Gmail)</span>
                   </>
                 )}
               </button>
 
+              <div className="relative py-2 flex items-center opacity-70">
+                <div className="flex-grow border-t border-slate-800"></div>
+                <span className="flex-shrink mx-4 text-slate-500 text-[9px] uppercase tracking-widest font-black">Ou</span>
+                <div className="flex-grow border-t border-slate-800"></div>
+              </div>
 
-            </form>
+              <form onSubmit={handleInstantEmailSubmit} className="space-y-3">
+                <div className="text-center">
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                    Problemas com o login do Google acima?
+                  </p>
+                  <p className="text-[9px] text-slate-500 leading-snug mt-0.5">
+                    Digite seu e-mail do Gmail comercial para entrar direto e com segurança!
+                  </p>
+                </div>
+                
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                    <Mail className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="email"
+                    required
+                    value={instantEmail}
+                    onChange={(e) => setInstantEmail(e.target.value)}
+                    placeholder="Digite seu Gmail"
+                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600/20 to-indigo-600/20 hover:from-blue-600 hover:to-indigo-600 text-blue-300 hover:text-white border border-blue-500/30 hover:border-transparent font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Acesso Direto Seguro</span>
+                </button>
+              </form>
+            </div>
           )}
 
           {/* Botão de Administrador em Outra Janela Pop-up */}
-          {authMode === "login" && (
+          {(authMode === "login" || authMode === "signup") && (
             <div className="pt-4 border-t border-slate-800/80 mt-4 text-center">
               <button
                 type="button"
@@ -3292,6 +3250,212 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     );
   }
 
+  // Se o usuário está logado mas não possui cadastro de cliente e não é administrador,
+  // mostramos a Página de Cadastro de Cliente para completar os dados exigidos no projeto
+  const needsRegistration = user && !isActuallyAdmin && !loggedInClient;
+
+  if (needsRegistration) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-sans relative p-4 overflow-hidden">
+        {/* Elementos de Brilho de Fundo */}
+        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-orange-600/10 rounded-full blur-[120px] pointer-events-none" />
+
+        <div className="w-full max-w-md bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl p-8 relative z-10 transition-all duration-300 animate-fade-in">
+          <div className="flex flex-col items-center mb-6">
+            <VitrionLogo className="w-14 h-14 mb-4 filter drop-shadow-[0_4px_12px_rgba(56,189,248,0.2)]" />
+            <h2 className="text-xl font-black text-white tracking-tight uppercase">Completar Cadastro</h2>
+            <p className="text-slate-400 text-xs text-center font-semibold tracking-wider uppercase mt-1">Insira os dados do seu estabelecimento para ativar seu sistema</p>
+          </div>
+
+          <div className="mb-4 bg-blue-500/10 border border-blue-500/20 text-blue-200 p-3.5 rounded-xl text-xs flex flex-col gap-1">
+            <span className="font-bold uppercase text-[9px] tracking-wider text-blue-400">Usuário Autenticado</span>
+            <span className="font-semibold text-slate-300 font-mono break-all text-xs">{user.email}</span>
+          </div>
+
+          <form onSubmit={handleCompleteRegistration} className="space-y-4">
+            <div>
+              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Nome do Estabelecimento / Loja</label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                  <Utensils className="w-4 h-4" />
+                </span>
+                <input
+                  type="text"
+                  required
+                  value={authStoreName}
+                  onChange={(e) => setAuthStoreName(e.target.value)}
+                  placeholder="ex: Padaria Colonial, Cafeteria do Bairro"
+                  className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">WhatsApp / Telefone</label>
+              <div className="relative flex items-center">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none z-10 font-sans">
+                  <Megaphone className="w-4 h-4" />
+                </span>
+                <div className="absolute right-3 flex items-center gap-1.5 h-full z-10 w-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthPhoneCountry("BR");
+                      setAuthPhone(formatBRPhone(authPhone));
+                    }}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all ${authPhoneCountry === "BR" ? "bg-blue-600/35 text-blue-300 border border-blue-500/40" : "text-slate-500 hover:text-slate-300"}`}
+                    title="Brasil"
+                  >
+                    🇧🇷
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthPhoneCountry("US");
+                      setAuthPhone(formatUSPhone(authPhone));
+                    }}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all ${authPhoneCountry === "US" ? "bg-blue-600/35 text-blue-300 border border-blue-500/40" : "text-slate-500 hover:text-slate-300"}`}
+                    title="United States"
+                  >
+                    🇺🇸
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={authPhone}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (authPhoneCountry === "BR") {
+                      setAuthPhone(formatBRPhone(raw));
+                    } else {
+                      setAuthPhone(formatUSPhone(raw));
+                    }
+                  }}
+                  placeholder={authPhoneCountry === "BR" ? "ex: (11) 99999-9999" : "ex: (201) 555-0123"}
+                  className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-24 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600 font-mono"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">E-mail de Contato</label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                  <Mail className="w-4 h-4" />
+                </span>
+                <input
+                  type="email"
+                  required
+                  value={regContactEmail}
+                  onChange={(e) => setRegContactEmail(e.target.value)}
+                  placeholder="ex: contato@seuestabelecimento.com"
+                  className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Endereço Comercial</label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                  <MapPin className="w-4 h-4" />
+                </span>
+                <input
+                  type="text"
+                  required
+                  value={authAddress}
+                  onChange={(e) => setAuthAddress(e.target.value)}
+                  placeholder="ex: Av. Paulista, 1500 - Centro"
+                  className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Cidade</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                    <MapPin className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={authCity}
+                    onChange={(e) => setAuthCity(e.target.value)}
+                    placeholder="ex: São Paulo"
+                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">País (Automático)</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                    <Globe className="w-4 h-4 text-blue-500 animate-pulse" />
+                  </span>
+                  <input
+                    type="text"
+                    readOnly
+                    tabIndex={-1}
+                    value={authPhoneCountry === "BR" ? "Brasil 🇧🇷" : "Estados Unidos 🇺🇸"}
+                    className="w-full bg-slate-950/60 border border-slate-800/60 text-slate-300 rounded-lg pl-9 pr-3 py-2.5 text-xs font-black uppercase tracking-wider select-none outline-none cursor-not-allowed"
+                    title="País reconhecido automaticamente com base no telefone"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Plano Escolhido</label>
+              <div className="bg-slate-950 border border-slate-800/80 rounded-lg p-3 text-slate-200 text-xs space-y-1">
+                <p className="font-bold text-blue-400 text-xs">Plano Básico (R$ 99,90/mês)</p>
+                <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
+                  Dá acesso à sincronização automática de até 4 telas em tempo real, painel de relatórios completa, galeria de produtos e criador de artes com IA.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:opacity-90 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-4 cursor-pointer font-semibold"
+            >
+              {authLoading ? (
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 animate-pulse" />
+                  Concluir Cadastro e Ativar Sistema
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await signOutUser();
+                } catch (e) {
+                  console.warn("signOut error", e);
+                }
+                localStorage.removeItem("vitrion_bypass_user");
+                setUser(null);
+                showToast("Desconectado com sucesso!", "success");
+              }}
+              className="w-full mt-2 py-2 px-3 bg-red-600/10 hover:bg-red-600/20 text-red-400 border border-red-900/30 rounded-xl text-[10px] uppercase tracking-wider font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              Cancelar e Sair
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-full overflow-hidden font-sans text-slate-800 bg-slate-50">
       
@@ -3394,16 +3558,14 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               </p>
             </div>
           </div>
-          <button 
-            onClick={handleInitializeDefaults}
-            className="w-full mt-3 py-1.5 px-3 bg-slate-800 hover:bg-red-950 text-red-300 border border-red-900/30 rounded text-[10px] uppercase tracking-wider font-bold transition-all cursor-pointer"
-          >
-            Redefinir Dados Padrão (Demo)
-          </button>
           
           <button 
             onClick={async () => {
-              await signOut(auth);
+              try {
+                await signOutUser();
+              } catch (e) {
+                console.warn("signOut error", e);
+              }
               localStorage.removeItem("vitrion_bypass_user");
               setUser(null);
               showToast("Desconectado com sucesso!", "success");
@@ -3593,7 +3755,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
                             {/* Número da TV identificador */}
                             <div className="absolute left-2.5 top-2.5 bg-slate-950/80 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase font-mono tracking-widest">
-                              #0{index + 1}
+                              #{getScreenDisplayNumber(sc.name, index).padStart(2, '0')}
                             </div>
                           </div>
 
@@ -3824,12 +3986,6 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                   <div className="p-12 text-center text-slate-400 flex flex-col items-center justify-center">
                     <Utensils className="w-12 h-12 opacity-35 mb-2" />
                     <p className="font-medium text-xs uppercase">Nenhum produto cadastrado no Vitrion Digital Display</p>
-                    <button 
-                      onClick={handleInitializeDefaults}
-                      className="mt-3 px-4 py-2 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider rounded-lg"
-                    >
-                      Carregar Padrões
-                    </button>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -3996,7 +4152,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                 className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 border-slate-300"
                               />
                               <div className="flex-1 min-w-0">
-                                <h5 className="font-bold text-[11px] uppercase tracking-wide truncate">#0{index + 1} {sc.name}</h5>
+                                <h5 className="font-bold text-[11px] uppercase tracking-wide truncate">#{getScreenDisplayNumber(sc.name, index).padStart(2, '0')} {sc.name}</h5>
                                 <p className="text-[9px] text-slate-400 uppercase tracking-widest truncate">{sc.location || "Área Principal"}</p>
                               </div>
                             </label>
@@ -4322,7 +4478,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     return (
                       <div key={sc.id} className="flex justify-between items-center bg-slate-50 px-4 py-2.5 rounded-lg border border-slate-200 hover:border-blue-500 transition-all">
                         <div className="truncate max-w-sm md:max-w-md flex items-center gap-2">
-                          <span className="font-bold text-blue-600">TV 0{index + 1}:</span> 
+                          <span className="font-bold text-blue-600">TV {getScreenDisplayNumber(sc.name, index).padStart(2, '0')}:</span> 
                           <span>{sc.name}</span>
                           <span className="bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[10px]">CÓDIGO: {scCode}</span>
                         </div>
@@ -5260,11 +5416,13 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                           <div className="flex-1 min-w-0">
                             <select 
                               disabled={!slotItem.enabled}
-                              value={isCustomUploaded ? "custom-upload" : slotItem.image}
+                              value={slotItem.image ? "custom-upload" : ""}
                               onChange={(e) => {
                                 const val = e.target.value;
-                                if (val !== "custom-upload") {
-                                  handleUpdateSlot({ image: val });
+                                if (val === "") {
+                                  handleUpdateSlot({ image: "" });
+                                } else if (val === "custom-upload") {
+                                  document.getElementById(`playlist-image-uploader-${idx}`)?.click();
                                 }
                               }}
                               className={`w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[11px] outline-none font-semibold ${
@@ -5272,31 +5430,17 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                               }`}
                             >
                               <option value="">🚫 Vazio / Sem Imagem</option>
-                              <optgroup label="Modelos Oficiais do Menu">
-                                <option value="chalk-bakery">🥖 Quadro Negro (Rústico)</option>
-                                <option value="pastel-sweet">🍰 Doce Charme (Blush)</option>
-                                <option value="cozy-coffee">☕ Cafeteria Premium (Stone Dark)</option>
-                                <option value="modern-brunch">🥪 Brunch Moderno (Teal)</option>
-                                <option value="promo-combo">🍔 Combo - Café com Pão de Queijo</option>
-                                <option value="promo-pix">💳 PIX - Chave e QR Code</option>
-                              </optgroup>
-                              {customImages.length > 0 && (
-                                <optgroup label="Sua Galeria Central de IA">
-                                  {customImages.map((img) => (
-                                    <option key={img.id} value={img.base64}>
-                                      🖼️ IA: {img.name}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              )}
-                              {isCustomUploaded && (
-                                <option value="custom-upload">📸 Imagem Carregada Manualmente</option>
-                              )}
+                              <option value="custom-upload">📸 Imagem Carregada Manualmente</option>
                             </select>
                           </div>
 
                           {/* Upload manual individual */}
-                          <div className="shrink-0 flex items-center">
+                          <div className="shrink-0 flex items-center gap-1.5">
+                            {slotItem.image && (
+                              <div className="w-6 h-6 rounded border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center">
+                                <img src={slotItem.image} alt="slot micro preview" className="w-full h-full object-cover" />
+                              </div>
+                            )}
                             <input 
                               type="file" 
                               accept="image/*"
@@ -5405,7 +5549,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
           <div className="bg-white rounded-xl border border-slate-200 shadow-2xl p-6 max-w-sm w-full">
             <h4 className="text-sm font-bold text-slate-900 uppercase">Gerenciar Sinal da TV</h4>
             <p className="text-xs text-slate-500 mt-2 mb-4 leading-relaxed">
-              Você deseja desativar temporariamente esta TV? Ela ficará em Standby (a imagem do menu não aparecerá), mas as configurações continuarão salvas para quando você quiser reativá-la.
+              Escolha uma ação para esta TV. Você pode apenas desativá-la temporariamente (colocando em Standby) ou excluí-la definitivamente do sistema.
             </p>
             <div className="flex flex-col gap-2">
               <button 
@@ -5413,13 +5557,19 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                   handleToggleScreenActiveStatus(isDeletingScreen, "offline");
                   setIsDeletingScreen(null);
                 }}
-                className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-all"
+                className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-all cursor-pointer"
               >
-                Desativar TV (Standby)
+                Colocar em Standby (Ocultar Menu)
+              </button>
+              <button 
+                onClick={handleDeleteScreen}
+                className="w-full py-2 bg-red-650 hover:bg-red-700 bg-red-600 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-all cursor-pointer"
+              >
+                Excluir TV Definitivamente
               </button>
               <button 
                 onClick={() => setIsDeletingScreen(null)}
-                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-lg transition-all"
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-lg transition-all cursor-pointer"
               >
                 Cancelar
               </button>
