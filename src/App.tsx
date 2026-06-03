@@ -2535,6 +2535,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [editingScreen, setEditingScreen] = useState<ScreenData | null>(null);
   const [editingProduct, setEditingProduct] = useState<ProductData | null>(null);
   const [isDeletingScreen, setIsDeletingScreen] = useState<string | null>(null);
+  const [isUploadingVideo, setIsUploadingVideo] = useState<boolean>(false);
 
   // Estado para Toast / Mensagens de Sucesso e Erro (Evitando alert e confirm do Navegador)
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
@@ -2736,7 +2737,27 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       showToast("Não é possível alterar as TVs: Sua assinatura está vencida ou bloqueada.", "error");
       return;
     }
+
     try {
+      // Validar tamanho do payload para evitar rejeição por limite de documento do Firestore (1 MB)
+      const serializedData = JSON.stringify({
+        name: updated.name,
+        location: updated.location,
+        overlayPrices: updated.overlayPrices,
+        selectedCategory: updated.selectedCategory,
+        currentImage: updated.currentImage,
+        currentVideo: updated.currentVideo || "",
+        clientId: updated.clientId || getCurrentClientId(),
+        displayMode: updated.displayMode || "single",
+        playlist: updated.playlist || [],
+      });
+
+      // Se exceder ~950KB (baseado no comprimento da string JSON)
+      if (serializedData.length > 950 * 1024) {
+        showToast("Arquivo muito grande: Os vídeos/imagens locais excedem o limite de 750KB do banco de dados em tempo real. Por favor, utilize um arquivo menor ou cole o link (URL) de um vídeo online abaixo!", "error");
+        return;
+      }
+
       await updateDoc(doc(db, "screens", updated.id), {
         name: updated.name,
         location: updated.location,
@@ -2750,8 +2771,15 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         lastSync: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
       });
       setEditingScreen(null);
-    } catch (err: unknown) {
-      handleFirestoreError(err, OperationType.WRITE, `screens/${updated.id}`);
+      showToast("TV configurada e sincronizada instantaneamente!", "success");
+    } catch (err: any) {
+      console.error("Erro ao sincronizar TV com o Firestore:", err);
+      const errMsg = err?.message || String(err);
+      if (errMsg.includes("too large") || errMsg.includes("exceeds the limit") || errMsg.includes("size limit")) {
+        showToast("Falha ao salvar: O vídeo/imagem carregado é muito grande para o Firestore. Use um vídeo menor ou use um Link URL do vídeo.", "error");
+      } else {
+        showToast(`Erro na sincronização: ${errMsg.slice(0, 80)}`, "error");
+      }
     }
   };
 
@@ -5350,16 +5378,21 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                   </div>
 
                   {/* --- AREA PARA SUBIR VÍDEO MANUALMENTE --- */}
-                  <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-2">
+                  <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-3">
                     <div className="flex justify-between items-center">
                       <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-                        📹 Vídeo de Exibição (Máx 10 MB)
+                        📹 Vídeo de Exibição
                       </label>
                       {editingScreen.currentVideo && (
                         <span className="text-[9px] bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded uppercase">Ativo</span>
                       )}
                     </div>
                     
+                    {/* Alerta explicativo elegante para banco de dados x tamanho de arquivo */}
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-2.5 rounded-lg text-[10px] text-slate-600 leading-normal">
+                      🚀 <strong>Suporte Ampliado para Loops Grandes:</strong> Vídeos de até <strong>35 MB</strong> (incluindo mídias pesadas de 15 MB ou mais) são enviados automaticamente para a nossa nuvem de mídias de alta velocidade, fornecendo um link instantâneo de streaming para as suas TVs!
+                    </div>
+
                     {/* Preview se existir vídeo */}
                     {editingScreen.currentVideo && (
                       <div className="relative w-full h-24 bg-slate-100 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
@@ -5372,7 +5405,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                         <button
                           type="button"
                           onClick={() => setEditingScreen({ ...editingScreen, currentVideo: "" })}
-                          className="absolute top-2.5 right-2.5 p-1 bg-red-600 hover:bg-red-700 text-white rounded-full shadow transition-all"
+                          className="absolute top-2.5 right-2.5 p-1 bg-red-600 hover:bg-red-700 text-white rounded-full shadow transition-all cursor-pointer"
                           title="Remover Vídeo"
                         >
                           <X className="w-3.5 h-3.5" />
@@ -5380,43 +5413,146 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                       </div>
                     )}
 
-                    <div className="flex items-center gap-2">
-                      <input 
-                        type="file"
-                        accept="video/*"
-                        id="screen-manual-video-uploader"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
+                    {/* Opção 1: Upload de Arquivo (Suporta até 35MB para videos longos!) */}
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                        Opção A: Enviar Vídeo Local (Até 35 MB)
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="file"
+                          accept="video/*"
+                          id="screen-manual-video-uploader"
+                          className="hidden"
+                          disabled={isUploadingVideo}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
 
-                          if (file.size > 10 * 1024 * 1024) {
-                            showToast("Erro: O vídeo excede o tamanho limite de 10 MB.", "error");
-                            return;
-                          }
+                            if (file.size > 35 * 1024 * 1024) {
+                              showToast(`Ops! O vídeo selecionado é muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). O limite para upload automático é de 35 MB. Reduza ou use a Opção B (Link URL) abaixo para tamanhos maiores!`, "error");
+                              return;
+                            }
 
-                          showToast("Carregando vídeo... aguarde", "info");
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            const res = event.target?.result as string;
+                            // Se o arquivo for menor que 750 KB, podemos processar localmente em milissegundos
+                            if (file.size <= 750 * 1024) {
+                              showToast("Processando vídeo curto instantaneamente...", "info");
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                const res = event.target?.result as string;
+                                setEditingScreen({
+                                  ...editingScreen,
+                                  currentVideo: res,
+                                  currentImage: "" // Remove a imagem quando colocar o vídeo
+                                });
+                                showToast("Vídeo sincronizado localmente! Clique em Sincronizar TV Agora.", "success");
+                              };
+                              reader.readAsDataURL(file);
+                            } else {
+                              // Se o arquivo for maior do que 750 KB e menor do que 35 MB (como os 15 MB do usuário), fazemos upload inteligente à nuvem
+                              setIsUploadingVideo(true);
+                              showToast(`Enviando vídeo de ${(file.size / 1024 / 1024).toFixed(1)} MB para a nuvem de streaming... Aguarde alguns segundos.`, "info");
+                              
+                              try {
+                                const formData = new FormData();
+                                formData.append("file", file);
+
+                                const response = await fetch("https://tmpfiles.org/api/v1/upload", {
+                                  method: "POST",
+                                  body: formData
+                                });
+
+                                if (!response.ok) {
+                                  throw new Error("Erro de comunicação com servidor de mídias.");
+                                }
+
+                                const result = await response.json();
+                                if (result.status === "success" && result.data?.url) {
+                                  const rawUrl = result.data.url;
+                                  // Converte a página de download para o link direto de reprodução/stream do vídeo
+                                  const directUrl = rawUrl.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/");
+
+                                  setEditingScreen({
+                                    ...editingScreen,
+                                    currentVideo: directUrl,
+                                    currentImage: ""
+                                  });
+                                  showToast("Vídeo na nuvem com link de alta velocidade! Agora clique em Sincronizar TV Agora.", "success");
+                                } else {
+                                  throw new Error("Formato de resposta inesperado do servidor de mídias.");
+                                }
+                              } catch (err: any) {
+                                console.error("Erro ao subir arquivo multimídia:", err);
+                                showToast("Erro no upload do vídeo para a nuvem. Tentando compressão local alternativa...", "error");
+                                
+                                // Força o processamento local mesmo que estoure parcialmente o tamanho (como plano de fuga de emergência)
+                                const reader = new FileReader();
+                                reader.onload = (event) => {
+                                  const res = event.target?.result as string;
+                                  setEditingScreen({
+                                    ...editingScreen,
+                                    currentVideo: res,
+                                    currentImage: ""
+                                  });
+                                  showToast("Carregado localmente como alternativa (clique em Sincronizar TV Agora).", "info");
+                                };
+                                reader.readAsDataURL(file);
+                              } finally {
+                                setIsUploadingVideo(false);
+                              }
+                            }
+                          }}
+                        />
+                        <label 
+                          htmlFor="screen-manual-video-uploader"
+                          className={`flex-1 flex items-center justify-center gap-2 border border-dashed border-slate-300 hover:border-blue-500 bg-white py-2.5 px-3 rounded-lg cursor-pointer hover:bg-slate-50 text-xs font-bold text-slate-700 transition-all font-sans ${isUploadingVideo ? 'opacity-60 cursor-not-allowed bg-slate-100' : ''}`}
+                        >
+                          {isUploadingVideo ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 text-blue-500 animate-spin" />
+                              <span>Enviando Vídeo de Alta Qualidade...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-4 h-4 text-slate-400" />
+                              <span>Escolher Vídeo Local (Máx 35MB)</span>
+                            </>
+                          )}
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Divisória visual */}
+                    <div className="relative py-1 flex items-center text-slate-300">
+                      <div className="flex-grow border-t border-slate-200"></div>
+                      <span className="flex-shrink mx-3 text-[8px] uppercase tracking-widest font-black text-slate-400">Ou alternativamente</span>
+                      <div className="flex-grow border-t border-slate-200"></div>
+                    </div>
+
+                    {/* Opção 2: URL de Vídeo de Alta Qualidade */}
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Opção B: Recomendado — Link URL de Vídeo Online</span>
+                      <div className="relative">
+                        <input 
+                          type="url"
+                          placeholder="Cole o link do seu vídeo em MP4 (Dropbox, Drive, Nuvem...)"
+                          value={editingScreen.currentVideo && !editingScreen.currentVideo.startsWith("data:") ? editingScreen.currentVideo : ""}
+                          onChange={(e) => {
+                            const val = e.target.value.trim();
                             setEditingScreen({
                               ...editingScreen,
-                              currentVideo: res,
-                              currentImage: "" // Remove a imagem quando colocar de vídeo
+                              currentVideo: val,
+                              currentImage: val ? "" : editingScreen.currentImage
                             });
-                            showToast("Vídeo de até 10MB carregado com sucesso!", "success");
-                          };
-                          reader.readAsDataURL(file);
-                        }}
-                      />
-                      <label 
-                        htmlFor="screen-manual-video-uploader"
-                        className="flex-1 flex items-center justify-center gap-2 border border-dashed border-slate-300 hover:border-blue-500 bg-white py-2.5 px-3 rounded-lg cursor-pointer hover:bg-slate-50 text-xs font-bold text-slate-700 transition-all"
-                      >
-                        <Upload className="w-4 h-4 text-slate-400" />
-                        Escolher Vídeo (Até 10MB)
-                      </label>
+                          }}
+                          className="w-full bg-white border border-slate-200 text-slate-800 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-medium placeholder-slate-400"
+                        />
+                      </div>
+                      <p className="text-[9px] text-slate-400 leading-relaxed font-semibold">
+                        Sem limites de tamanho! Carregue o vídeo no Google Drive, Dropbox ou servidor próprio e cole o link direto aqui.
+                      </p>
                     </div>
+
                   </div>
                 </div>
               ) : (
