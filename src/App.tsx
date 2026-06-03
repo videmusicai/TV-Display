@@ -1336,6 +1336,14 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
         </div>
       )}
 
+      {/* Dynamic Watermark / Logo of Vitrion Digital Display on all displays */}
+      <div className="absolute bottom-6 left-6 z-20 flex items-center gap-2.5 bg-slate-950/40 backdrop-blur-sm border border-white/5 py-1.5 px-3 rounded-full text-white pointer-events-none select-none">
+        <VitrionLogo className="w-4 h-4 text-white drop-shadow-[0_0_8px_rgba(56,189,248,0.3)] animate-pulse" />
+        <div className="flex flex-col">
+          <span className="text-[10px] font-black tracking-wider uppercase leading-none">Vitrion</span>
+          <span className="text-[7px] text-slate-300 tracking-widest uppercase leading-none font-sans font-medium mt-0.5">Digital Display</span>
+        </div>
+      </div>
 
     </div>
   );
@@ -3210,7 +3218,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         {isAdminModalOpen && (
           <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50 p-4 font-sans animate-fade-in">
             <div 
-              className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 relative"
+              className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 relative max-h-[90vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Botão de Fechar */}
@@ -5232,15 +5240,15 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
           ============================================== */}
       {editingScreen && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-w-lg w-full">
-            <div className="bg-slate-900 p-4 font-bold text-white flex justify-between items-center text-sm uppercase tracking-wider">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-w-lg w-full max-h-[90vh] flex flex-col">
+            <div className="bg-slate-900 p-4 font-bold text-white flex justify-between items-center text-sm uppercase tracking-wider shrink-0">
               <span>{editingScreen.name}</span>
               <button onClick={() => setEditingScreen(null)} className="text-slate-400 hover:text-white">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
               <div>
                 <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider mb-1">Identificação da TV</label>
                 <input 
@@ -5707,7 +5715,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
             </div>
 
-            <div className="bg-slate-50 p-4 flex gap-2 justify-end border-t border-slate-100">
+            <div className="bg-slate-50 p-4 flex gap-2 justify-end border-t border-slate-100 shrink-0">
               <button 
                 onClick={() => setEditingScreen(null)} 
                 className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg uppercase tracking-wider"
@@ -5728,7 +5736,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       {/* MODAL DE DELEÇÃO DE TV */}
       {isDeletingScreen && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl p-6 max-w-sm w-full">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl p-6 max-w-sm w-full max-h-[90vh] overflow-y-auto flex flex-col">
             <h4 className="text-sm font-bold text-slate-900 uppercase">Gerenciar Sinal da TV</h4>
             <p className="text-xs text-slate-500 mt-2 mb-4 leading-relaxed">
               Escolha uma ação para esta TV. Você pode apenas desativá-la temporariamente (colocando em Standby) ou excluí-la definitivamente do sistema.
@@ -5763,8 +5771,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       {/* MODAL 4: TRANSMITIR IMAGEM DO BANCO DE DADOS EM SELEÇÃO ADAPTÁVEL */}
       {targetBroadcastingImage && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in animate-duration-200">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-w-md w-full">
-            <div className="bg-slate-900 p-4 font-bold text-white flex justify-between items-center text-xs uppercase tracking-wider">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-w-md w-full max-h-[90vh] flex flex-col">
+            <div className="bg-slate-900 p-4 font-bold text-white flex justify-between items-center text-xs uppercase tracking-wider shrink-0">
               <div className="flex items-center gap-2">
                 <Megaphone className="w-4 h-4 text-emerald-400" />
                 <span>Transmitir: {targetBroadcastingImage.name}</span>
@@ -5774,7 +5782,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
               <div className="aspect-video bg-slate-950 rounded-xl overflow-hidden border border-slate-200 shadow-inner">
                 <img src={targetBroadcastingImage.base64} alt="Preview" className="w-full h-full object-contain" />
               </div>
@@ -5817,7 +5825,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               </div>
             </div>
 
-            <div className="bg-slate-50 px-6 py-4 flex gap-2 justify-end border-t border-slate-100">
+            <div className="bg-slate-50 px-6 py-4 flex gap-2 justify-end border-t border-slate-100 shrink-0">
               <button 
                 onClick={() => setTargetBroadcastingImage(null)}
                 className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg uppercase tracking-wider"
@@ -5839,7 +5847,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       {/* MODAL DE CONFIRMAÇÃO CUSTOMIZADO PREMIUM ANTI-SLEEP & ANTI-IFRAME-SANDBOX */}
       {confirmModal.isOpen && (
         <div className="fixed inset-0 z-[110] bg-slate-950/80 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in font-sans">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-w-sm w-full p-6 space-y-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-w-sm w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto flex flex-col justify-between">
             <div className="flex flex-col items-center text-center space-y-2">
               <div className="p-3 bg-amber-50 rounded-full text-amber-600 border border-amber-100">
                 <AlertCircle className="w-6 h-6 animate-pulse" />
