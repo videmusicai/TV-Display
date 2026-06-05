@@ -76,6 +76,36 @@ export function formatUSPhone(value: string): string {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
 }
 
+// Converte links comuns do Google Drive e Dropbox em URLs diretas para imagens / vídeos
+export function getDirectMediaUrl(url: string | null | undefined): string {
+  if (!url) return "";
+  const trimmed = url.trim();
+  if (trimmed.startsWith("data:")) return trimmed;
+
+  let directUrl = trimmed;
+
+  // 1. Google Drive view/open links
+  if (directUrl.includes("drive.google.com")) {
+    const fileIdMatch = directUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || directUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (fileIdMatch && fileIdMatch[1]) {
+      const fileId = fileIdMatch[1];
+      return `https://drive.google.com/uc?export=view&id=${fileId}`;
+    }
+  }
+
+  // 2. Dropbox share links
+  if (directUrl.includes("dropbox.com")) {
+    if (directUrl.includes("dl=0")) {
+      return directUrl.replace("dl=0", "raw=1");
+    } else if (!directUrl.includes("raw=1") && !directUrl.includes("dl=1")) {
+      const separator = directUrl.includes("?") ? "&" : "?";
+      return `${directUrl}${separator}raw=1`;
+    }
+  }
+
+  return directUrl;
+}
+
 // Definindo as Interfaces principais
 interface PlaylistItem {
   id: string;
@@ -1257,7 +1287,7 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
       <div className="absolute inset-0 w-full h-full flex items-center justify-center">
         {(screen?.displayMode || "single") === "single" && screen?.currentVideo ? (
           <video 
-            src={screen.currentVideo}
+            src={getDirectMediaUrl(screen.currentVideo)}
             autoPlay
             loop
             muted
@@ -1273,10 +1303,11 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
           />
         ) : activeImageToShow ? (
           <img 
-            src={activeImageToShow} 
+            src={getDirectMediaUrl(activeImageToShow)} 
             alt="Fornada Display" 
             className="w-full h-full object-cover animate-fade-in"
             key={activeImageToShow}
+            referrerPolicy="no-referrer"
           />
         ) : (
           <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center text-white relative p-6">
@@ -3821,7 +3852,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                         : (sc.currentImage || "");
 
                       const presetImg = PRESET_TEMPLATES.find(t => t.id === activeImage);
-                      const isCustomUploaded = activeImage.startsWith("data:");
+                      const isCustomUploaded = activeImage.startsWith("data:") || activeImage.startsWith("http://") || activeImage.startsWith("https://");
                       const scCode = sc.shortCode || getOrGenerateShortCode(sc.id);
                       const displayUrl = `${window.location.origin}${window.location.pathname}?screen=${scCode}`;
 
@@ -3830,11 +3861,11 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                           {/* Imagem/Vídeo de Preview Mockup 16:9 */}
                           <div className="h-32 bg-slate-900 relative flex items-center justify-center overflow-hidden border-b border-slate-100">
                             {(sc.displayMode || "single") === "single" && sc.currentVideo ? (
-                              <video src={sc.currentVideo} muted className="w-full h-full object-cover" />
+                              <video src={getDirectMediaUrl(sc.currentVideo)} muted className="w-full h-full object-cover" />
                             ) : presetImg ? (
                               <div className="w-full h-full scale-[0.6] opacity-90 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: presetImg.svgMarkup }} />
                             ) : isCustomUploaded ? (
-                              <img src={activeImage} alt="Preview custom" className="w-full h-full object-cover" />
+                              <img src={getDirectMediaUrl(activeImage)} alt="Preview custom" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
                               <div className="flex flex-col items-center justify-center p-4 gap-1 select-none text-slate-500">
                                 <VitrionLogo className="w-8 h-8 opacity-40 filter drop-shadow-[0_2px_4px_rgba(56,189,248,0.15)] animate-pulse" />
@@ -5371,9 +5402,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     {editingScreen.currentImage && !editingScreen.currentVideo && (
                       <div className="relative w-full h-24 bg-slate-100 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
                         <img 
-                          src={editingScreen.currentImage} 
+                          src={getDirectMediaUrl(editingScreen.currentImage)} 
                           alt="Visualização da imagem" 
                           className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
                         />
                         <button
                           type="button"
@@ -5737,7 +5769,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                           <div className="shrink-0 flex items-center gap-1.5">
                             {slotItem.image && (
                               <div className="w-6 h-6 rounded border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center">
-                                <img src={slotItem.image} alt="slot micro preview" className="w-full h-full object-cover" />
+                                <img src={getDirectMediaUrl(slotItem.image)} alt="slot micro preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                               </div>
                             )}
                             <input 
