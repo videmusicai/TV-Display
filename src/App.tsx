@@ -122,6 +122,66 @@ export function getDirectMediaUrl(url: string | null | undefined): string {
   return directUrl;
 }
 
+// Definindo os Planos de Assinatura solicitados pelo usuário:
+// para 1 Tv valor de $10.00
+// para 3 TVs valor de $20.00
+// para 5 Tvs valor de $30.00
+// para 7 Tvs valor de $40.00
+// para 9 Tvs valor de $50.00
+
+export interface PlanOption {
+  value: string;
+  name: string;
+  label: string;
+  maxScreens: number;
+  maxProducts: number;
+  price: number;
+  description: string;
+}
+
+export const PLAN_OPTIONS: PlanOption[] = [
+  { value: "plan_1tv", name: "Plano 1 TV", label: "Plano 1 TV ($10.00/mês)", maxScreens: 1, maxProducts: 50, price: 10.00, description: "Perfeito para comércios locais pequenos com apenas uma TV para divulgação central." },
+  { value: "plan_3tv", name: "Plano 3 TVs", label: "Plano 3 TVs ($20.00/mês)", maxScreens: 3, maxProducts: 100, price: 20.00, description: "Ideal para lojas de médio porte que utilizam menus digitais em múltiplos ângulos." },
+  { value: "plan_5tv", name: "Plano 5 TVs", label: "Plano 5 TVs ($30.00/mês)", maxScreens: 5, maxProducts: 150, price: 30.00, description: "Excelente para estabelecimentos com múltiplos displays focados em mídias promocionais." },
+  { value: "plan_7tv", name: "Plano 7 TVs", label: "Plano 7 TVs ($40.00/mês)", maxScreens: 7, maxProducts: 200, price: 40.00, description: "Perfeito para grandes padarias e redes de restaurantes com sincronização total." },
+  { value: "plan_9tv", name: "Plano 9 TVs", label: "Plano 9 TVs ($50.00/mês)", maxScreens: 9, maxProducts: 250, price: 50.00, description: "Nossa cobertura de máximo poder para amplos layouts visuais e grades multimídias sincronizadas." }
+];
+
+export const getPlanDetails = (planId: string) => {
+  const normalized = (planId || "").toLowerCase();
+  const found = PLAN_OPTIONS.find(p => p.value.toLowerCase() === normalized);
+  if (found) return found;
+
+  // Fallbacks para planos herdados ou de testes
+  if (normalized === "1tv") {
+    return { value: "plan_1tv", name: "Plano 1 TV", label: "Plano 1 TV ($10.00/mês)", maxScreens: 1, maxProducts: 50, price: 10.00, description: "Perfeito para comércios locais pequenos com apenas uma TV." };
+  }
+  if (normalized === "3tv") {
+    return { value: "plan_3tv", name: "Plano 3 TVs", label: "Plano 3 TVs ($20.00/mês)", maxScreens: 3, maxProducts: 100, price: 20.00, description: "Ideal para lojas de médio porte." };
+  }
+  if (normalized === "5tv") {
+    return { value: "plan_5tv", name: "Plano 5 TVs", label: "Plano 5 TVs ($30.00/mês)", maxScreens: 5, maxProducts: 150, price: 30.00, description: "Excelente para estabelecimentos." };
+  }
+  if (normalized === "7tv") {
+    return { value: "plan_7tv", name: "Plano 7 TVs", label: "Plano 7 TVs ($40.00/mês)", maxScreens: 7, maxProducts: 200, price: 40.00, description: "Perfeito para padarias maiores." };
+  }
+  if (normalized === "9tv") {
+    return { value: "plan_9tv", name: "Plano 9 TVs", label: "Plano 9 TVs ($50.00/mês)", maxScreens: 9, maxProducts: 250, price: 50.00, description: "Suporte absoluto." };
+  }
+  if (normalized === "demo") {
+    return { value: "demo", name: "Plano DEMO", label: "DEMO (1 TV • Grátis)", maxScreens: 1, maxProducts: 5, price: 0.00, description: "Modo demonstração limitado." };
+  }
+  if (normalized === "basico") {
+    return { value: "basico", name: "Plano Básico", label: "Básico Legado (4 TVs)", maxScreens: 4, maxProducts: 25, price: 99.90, description: "Plano básico com limitação de 4 TVs." };
+  }
+  if (normalized === "pro") {
+    return { value: "pro", name: "Plano PRO", label: "Pro Legado (20 TVs)", maxScreens: 20, maxProducts: 150, price: 199.90, description: "Plano PRO com limitação de 20 TVs." };
+  }
+
+  // Fallback geral
+  return PLAN_OPTIONS[0];
+};
+
 // Definindo as Interfaces principais
 interface PlaylistItem {
   id: string;
@@ -1573,6 +1633,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [instantEmail, setInstantEmail] = useState("");
+  const [regSelectedPlan, setRegSelectedPlan] = useState<string>("plan_1tv");
 
   useEffect(() => {
     if (user?.email && !regContactEmail) {
@@ -1623,6 +1684,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       const cliId = `client_${user.uid}`;
       const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 mês de testes grátis!
       const autoCountry = authPhoneCountry === "BR" ? "Brasil" : "Estados Unidos";
+      const planDetails = getPlanDetails(regSelectedPlan);
       
       await setDoc(doc(db, "clients", cliId), {
         id: cliId,
@@ -1635,10 +1697,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         city: authCity.trim(),
         country: autoCountry,
         pais: autoCountry,
-        monthlyFee: 99.90,
+        monthlyFee: planDetails.price,
         expirationDate: expiry,
         status: "pending", // Em análise pelo Administrador (permite teste livre)
-        plan: "basico", // Plano básico padrão para novos cadastros (suporta 4 TVs)
+        plan: regSelectedPlan,
         createdAt: new Date().toISOString()
       }, { merge: true });
 
@@ -1837,24 +1899,32 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
           throw err;
         }
       }
-      setUser({
+      const adminUserObj = {
         uid: cred?.user?.uid || "admin_super_uid",
         email: finalAdminEmail,
         isAnonymous: false,
-        emailVerified: true
-      });
+        emailVerified: true,
+        isAdminSession: true
+      };
+      localStorage.setItem("vitrion_is_admin_session", "true");
+      localStorage.setItem("vitrion_bypass_user", JSON.stringify(adminUserObj));
+      setUser(adminUserObj);
       showToast("Painel de Administrador Vitrion acessado com sucesso!", "success");
       setIsAdminModalOpen(false);
       setAdminModalEmail("");
       setAdminModalPassword("");
     } catch (bypassErr) {
       console.warn("Bypass de admin local ativado", bypassErr);
-      setUser({
+      const adminUserObjBypass = {
         uid: "admin_super_uid",
         email: finalAdminEmail,
         isAnonymous: false,
-        emailVerified: true
-      });
+        emailVerified: true,
+        isAdminSession: true
+      };
+      localStorage.setItem("vitrion_is_admin_session", "true");
+      localStorage.setItem("vitrion_bypass_user", JSON.stringify(adminUserObjBypass));
+      setUser(adminUserObjBypass);
       showToast("Painel de Administrador acessado com sucesso!", "success");
       setIsAdminModalOpen(false);
       setAdminModalEmail("");
@@ -1870,6 +1940,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     try {
       const loggedUser = await signInWithGoogle();
       if (loggedUser) {
+        if (loggedUser.email) {
+          localStorage.setItem("vitrion_last_email", loggedUser.email.toLowerCase());
+        }
+        localStorage.removeItem("vitrion_is_admin_session");
         setUser(loggedUser);
         showToast("Painel Vitrion acessado com o Google!", "success");
       }
@@ -1909,7 +1983,9 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         emailVerified: true
       };
       // Save to localStorage so it stays active
+      localStorage.removeItem("vitrion_is_admin_session");
       localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
+      localStorage.setItem("vitrion_last_email", formattedEmail);
       setUser(mockUser);
       showToast("Conectado com sucesso pelo e-mail!", "success");
     } catch (err: any) {
@@ -1960,23 +2036,31 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 throw err;
               }
             }
-            setUser({
+            const adminUserObj = {
               uid: cred?.user?.uid || "admin_super_uid",
               email: finalAdminEmail,
               isAnonymous: false,
-              emailVerified: true
-            });
+              emailVerified: true,
+              isAdminSession: true
+            };
+            localStorage.setItem("vitrion_is_admin_session", "true");
+            localStorage.setItem("vitrion_bypass_user", JSON.stringify(adminUserObj));
+            setUser(adminUserObj);
             showToast("Painel do Super Administrador do Vitrion acessado com sucesso!", "success");
             setAuthLoading(false);
             return;
           } catch (bypassErr) {
             console.warn("Bypass ativado para admin local", bypassErr);
-            setUser({
+            const adminUserObjBypass = {
               uid: "admin_super_uid",
               email: finalAdminEmail,
               isAnonymous: false,
-              emailVerified: true
-            });
+              emailVerified: true,
+              isAdminSession: true
+            };
+            localStorage.setItem("vitrion_is_admin_session", "true");
+            localStorage.setItem("vitrion_bypass_user", JSON.stringify(adminUserObjBypass));
+            setUser(adminUserObjBypass);
             showToast("Painel do Super Administrador acessado (Bypass Local)!", "success");
             setAuthLoading(false);
             return;
@@ -2139,6 +2223,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         }
 
         if (cred && cred.user) {
+          if (cred.user.email) {
+            localStorage.setItem("vitrion_last_email", cred.user.email.toLowerCase());
+          }
+          localStorage.removeItem("vitrion_is_admin_session");
           setUser(cred.user);
           showToast(`Painel Vitrion acessado com sucesso!`, "success");
         }
@@ -2159,6 +2247,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
             isAnonymous: false,
             emailVerified: true
           };
+          localStorage.removeItem("vitrion_is_admin_session");
           localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
           cred = { user: mockUser };
           
@@ -2210,14 +2299,14 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [newClientPhone2, setNewClientPhone2] = useState("");
   const [newClientPhone2Country, setNewClientPhone2Country] = useState<"BR" | "US">("BR");
   const [newClientPassword, setNewClientPassword] = useState("");
-  const [newClientFee, setNewClientFee] = useState("99.90");
+  const [newClientFee, setNewClientFee] = useState("10.00");
   const [newClientExpiration, setNewClientExpiration] = useState("");
-  const [newClientPlan, setNewClientPlan] = useState<"demo" | "basico" | "pro">("basico");
+  const [newClientPlan, setNewClientPlan] = useState<string>("plan_1tv");
   const [editingClient, setEditingClient] = useState<any | null>(null);
   const [clientSearchTerm, setClientSearchTerm] = useState("");
   const [impersonatedClient, setImpersonatedClient] = useState<any | null>(null);
 
-  const isActuallyAdmin = user?.email?.toLowerCase() === "videmusicai@gmail.com" || user?.email?.toLowerCase() === "admin@vitrion.com.br" || user?.email?.toLowerCase() === "vitrion54@vitrion.com.br";
+  const isActuallyAdmin = (user?.email?.toLowerCase() === "videmusicai@gmail.com" || user?.email?.toLowerCase() === "admin@vitrion.com.br" || user?.email?.toLowerCase() === "vitrion54@vitrion.com.br") && localStorage.getItem("vitrion_is_admin_session") === "true";
   const isSuperAdmin = isActuallyAdmin && !impersonatedClient;
 
   useEffect(() => {
@@ -2768,12 +2857,11 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       const plan = currentId === "demo_client" ? "pro" : (clientRecord?.plan || "basico");
       const count = rawProducts.filter(p => p.clientId === currentId).length;
 
-      let maxProducts = 5;
-      if (plan === "basico") maxProducts = 25;
-      else if (plan === "pro") maxProducts = 150;
+      const planDetails = getPlanDetails(plan);
+      const maxProducts = planDetails.maxProducts;
 
       if (count >= maxProducts) {
-        showToast(`Limite de Cardápio Excedido no plano ${plan.toUpperCase()}: Este plano permite cadastrar no máximo ${maxProducts} itens no menu. Realize o upgrade comercial para adicionar mais produtos.`, "error");
+        showToast(`Limite de Cardápio Excedido no plano ${planDetails.label}: Este plano permite cadastrar no máximo ${maxProducts} itens no menu. Realize o upgrade comercial para adicionar mais produtos.`, "error");
         return;
       }
     }
@@ -2877,12 +2965,11 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     const plan = currentId === "demo_client" ? "pro" : (clientRecord?.plan || "basico");
     const count = rawScreens.filter(s => s.clientId === currentId).length;
 
-    let maxScreens = 1;
-    if (plan === "basico") maxScreens = 4;
-    else if (plan === "pro") maxScreens = 20;
+    const planDetails = getPlanDetails(plan);
+    const maxScreens = planDetails.maxScreens;
 
     if (count >= maxScreens) {
-      showToast(`Limite de Displays Excedido no plano ${plan.toUpperCase()}: Este plano permite no máximo ${maxScreens} TVs ativas. Solicite a alteração do plano junto ao Administrador para adicionar mais displays.`, "error");
+      showToast(`Limite de Displays Excedido no plano ${planDetails.label}: Este plano permite no máximo ${maxScreens} TVs ativas. Solicite a alteração do plano junto ao Administrador para adicionar mais displays.`, "error");
       return;
     }
 
@@ -3208,11 +3295,11 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
           ) : (
             <div className="space-y-4 py-2 font-sans">
               <div className="text-center space-y-1 my-3">
-                <p className="text-slate-300 text-xs leading-relaxed font-semibold">
-                  Acesse sua vitrine digital e área administrativa utilizando sua conta do Google (Gmail).
+                <p className="text-slate-300 text-xs leading-relaxed font-semibold animate-fade-in">
+                  Acesse sua vitrine digital e área administrativa utilizando e-mail ou usuário e senha.
                 </p>
-                <p className="text-[9px] text-blue-400 uppercase tracking-widest font-black">
-                  Conexão Automática e Segura
+                <p className="text-[9px] text-blue-400 uppercase tracking-widest font-black animate-fade-in">
+                  Acesso Direto e Configuração Rápida
                 </p>
               </div>
 
@@ -3286,6 +3373,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                               emailVerified: true
                             };
                             localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
+                            localStorage.setItem("vitrion_last_email", formattedEmail);
                             setUser(mockUser);
                             showToast(`Conectado com sucesso como ${formattedEmail}!`, "success");
                           } catch (err) {
@@ -3303,60 +3391,115 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 </div>
               )}
 
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                disabled={authLoading}
-                className="w-full py-3 px-4 bg-white hover:bg-slate-100 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-3 cursor-pointer border border-slate-800/20"
-              >
-                {authLoading ? (
-                  <span className="w-4 h-4 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" />
+              <form onSubmit={handleAuthSubmit} className="space-y-3.5">
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1.5">
+                    Nome de Usuário ou E-mail
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                      <User className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      placeholder="Ex: padariacolonial ou seu-email@gmail.com"
+                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1.5 flex justify-between items-center">
+                    <span>Senha Secreta</span>
+                    {authMode === "login" && (
+                      <button 
+                        type="button"
+                        className="text-[9px] text-blue-400 hover:underline cursor-pointer lowercase" 
+                        onClick={() => showToast("Se você esquecer o seu login de testes, digite um usuário novo para registrar na hora!", "info")}
+                      >
+                        Esqueceu a senha?
+                      </button>
+                    )}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                      <Lock className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      placeholder="Mínimo de 6 caracteres"
+                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700"
+                    />
+                  </div>
+                </div>
+
+                {authMode === "signup" ? (
+                  <button
+                    type="submit"
+                    disabled={authLoading}
+                    className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:opacity-90 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-4 cursor-pointer font-semibold"
+                  >
+                    {authLoading ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 animate-pulse shrink-0" />
+                        <span>Criar Minha Conta Grátis</span>
+                      </>
+                    )}
+                  </button>
                 ) : (
-                  <>
-                    <Chrome className="w-4.5 h-4.5 text-blue-600 shrink-0" />
-                    <span>Acessar com o Google (Gmail)</span>
-                  </>
+                  <button
+                    type="submit"
+                    disabled={authLoading}
+                    className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:opacity-90 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-4 cursor-pointer font-semibold"
+                  >
+                    {authLoading ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <UserCheck className="w-4.5 h-4.5 shrink-0" />
+                        <span>Acessar Plataforma</span>
+                      </>
+                    )}
+                  </button>
                 )}
-              </button>
 
-              <div className="relative py-2 flex items-center opacity-70">
-                <div className="flex-grow border-t border-slate-800"></div>
-                <span className="flex-shrink mx-4 text-slate-500 text-[9px] uppercase tracking-widest font-black">Ou</span>
-                <div className="flex-grow border-t border-slate-800"></div>
-              </div>
-
-              <form onSubmit={handleInstantEmailSubmit} className="space-y-3">
-                <div className="text-center">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                    Problemas com o login do Google acima?
-                  </p>
-                  <p className="text-[9px] text-slate-500 leading-snug mt-0.5">
-                    Digite seu e-mail do Gmail comercial para entrar direto e com segurança!
-                  </p>
+                <div className="text-center pt-2">
+                  {authMode === "login" ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode("signup");
+                        setAuthError("");
+                      }}
+                      className="text-[10px] text-slate-400 hover:text-white transition-all font-bold"
+                    >
+                      Não tem uma conta comercial? <span className="text-blue-400 hover:underline">Cadastre-se gratuitamente</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode("login");
+                        setAuthError("");
+                      }}
+                      className="text-[10px] text-slate-400 hover:text-white transition-all font-bold"
+                    >
+                      Já possui uma conta ativa? <span className="text-blue-400 hover:underline">Fazer login</span>
+                    </button>
+                  )}
                 </div>
-                
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                    <Mail className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="email"
-                    required
-                    value={instantEmail}
-                    onChange={(e) => setInstantEmail(e.target.value)}
-                    placeholder="Digite seu Gmail"
-                    className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600/20 to-indigo-600/20 hover:from-blue-600 hover:to-indigo-600 text-blue-300 hover:text-white border border-blue-500/30 hover:border-transparent font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <span>Acesso Direto Seguro</span>
-                </button>
               </form>
+
+
             </div>
           )}
 
@@ -3492,9 +3635,11 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
             <p className="text-slate-400 text-xs text-center font-semibold tracking-wider uppercase mt-1">Insira os dados do seu estabelecimento para ativar seu sistema</p>
           </div>
 
-          <div className="mb-4 bg-blue-500/10 border border-blue-500/20 text-blue-200 p-3.5 rounded-xl text-xs flex flex-col gap-1">
-            <span className="font-bold uppercase text-[9px] tracking-wider text-blue-400">Usuário Autenticado</span>
-            <span className="font-semibold text-slate-300 font-mono break-all text-xs">{user.email}</span>
+          <div className="mb-4 bg-blue-500/10 border border-blue-500/20 text-blue-200 p-3.5 rounded-xl text-xs flex flex-col gap-1 w-full text-center">
+            <span className="font-bold uppercase text-[9px] tracking-wider text-blue-400">Usuário de Acesso</span>
+            <span className="font-extrabold text-slate-100 font-mono break-all text-sm">
+              {user?.email?.endsWith("@vitrion.com.br") ? user.email.replace("@vitrion.com.br", "") : user?.email}
+            </span>
           </div>
 
           <form onSubmit={handleCompleteRegistration} className="space-y-4">
@@ -3634,13 +3779,20 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
             </div>
 
             <div>
-              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Plano Escolhido</label>
-              <div className="bg-slate-950 border border-slate-800/80 rounded-lg p-3 text-slate-200 text-xs space-y-1">
-                <p className="font-bold text-blue-400 text-xs">Plano Básico (R$ 99,90/mês)</p>
-                <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
-                  Dá acesso à sincronização automática de até 4 telas em tempo real, painel de relatórios completa, galeria de produtos e criador de artes com IA.
-                </p>
-              </div>
+              <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1.5">Selecione o Plano Desejado para suas TVs</label>
+              <select
+                value={regSelectedPlan}
+                onChange={(e) => setRegSelectedPlan(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-bold mb-3"
+              >
+                {PLAN_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+
+
             </div>
 
             <button
@@ -3652,7 +3804,6 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4 animate-pulse" />
                   Concluir Cadastro e Ativar Sistema
                 </>
               )}
@@ -3666,6 +3817,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 } catch (e) {
                   console.warn("signOut error", e);
                 }
+                localStorage.removeItem("vitrion_is_admin_session");
                 localStorage.removeItem("vitrion_bypass_user");
                 setUser(null);
                 showToast("Desconectado com sucesso!", "success");
@@ -3781,6 +3933,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               } catch (e) {
                 console.warn("signOut error", e);
               }
+              localStorage.removeItem("vitrion_is_admin_session");
               localStorage.removeItem("vitrion_bypass_user");
               setUser(null);
               showToast("Desconectado com sucesso!", "success");
@@ -4865,13 +5018,13 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                           <div className="flex justify-between items-start">
                             <div>
                               <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                                client.plan === "pro" 
-                                  ? "bg-purple-100 text-purple-800" 
-                                  : client.plan === "basico" 
-                                    ? "bg-blue-100 text-blue-800" 
+                                client.plan?.startsWith("plan_") 
+                                  ? "bg-blue-100 text-blue-800 border border-blue-200" 
+                                  : client.plan === "pro"
+                                    ? "bg-purple-100 text-purple-800" 
                                     : "bg-slate-100 text-slate-800"
                               }`}>
-                                Plano {client.plan?.toUpperCase() || "BÁSICO"}
+                                {getPlanDetails(client.plan).name}
                               </span>
                               <h4 className="font-bold text-slate-800 text-xs mt-1.5">{client.name}</h4>
                               <p className="text-[10px] text-slate-500 font-mono mt-0.5">{client.ownerEmail}</p>
@@ -5004,13 +5157,13 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                 </td>
                                 <td className="p-3.5 text-center">
                                   <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
-                                    client.plan === "pro" 
-                                      ? "bg-purple-50 text-purple-700 border-purple-200" 
-                                      : client.plan === "basico" 
-                                        ? "bg-blue-50 text-blue-700 border-blue-200" 
+                                    client.plan?.startsWith("plan_") 
+                                      ? "bg-blue-50 text-blue-700 border-blue-200" 
+                                      : client.plan === "pro" 
+                                        ? "bg-purple-50 text-purple-700 border-purple-200" 
                                         : "bg-slate-50 text-slate-700 border-slate-200"
                                   }`}>
-                                    {client.plan?.toUpperCase() || "BÁSICO"}
+                                    {getPlanDetails(client.plan).name}
                                   </span>
                                 </td>
                                 <td className="p-3.5 text-center font-bold text-slate-700">R$ {client.monthlyFee?.toFixed(2).replace(".", ",")}</td>
@@ -5315,16 +5468,27 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     </div>
 
                     <div className="font-sans">
-                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Liberar Plano Especial</label>
+                      <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Liberar Plano Comercial</label>
                       <select 
                         required
                         value={newClientPlan}
-                        onChange={(e) => setNewClientPlan(e.target.value as "demo" | "basico" | "pro")}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setNewClientPlan(val);
+                          const details = getPlanDetails(val);
+                          setNewClientFee(String(details.price));
+                        }}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2 text-slate-700 text-xs outline-none focus:ring-2 focus:ring-blue-500/10 font-bold"
                       >
-                        <option value="demo">DEMO (Máx 1 TV • 5 Produtos)</option>
-                        <option value="basico">BÁSICO (Máx 4 TVs • 25 Produtos)</option>
-                        <option value="pro">PRO (Máx 20 TVs • 150 Produtos)</option>
+                        {PLAN_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                        {/* Compatibilidade retroativa para registros legados no banco de dados */}
+                        <option value="demo">DEMO LEGADO (Máx 1 TV • 5 Produtos)</option>
+                        <option value="basico">BÁSICO LEGADO (Máx 4 TVs • 25 Produtos)</option>
+                        <option value="pro">PRO LEGADO (Máx 20 TVs • 150 Produtos)</option>
                       </select>
                       <p className="text-[9px] text-slate-400 mt-1">Garante controle rígido e auditado sobre as cotas físicas de TVs e itens de cardápio nas TVs.</p>
                     </div>
@@ -5387,8 +5551,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               <span className="font-semibold text-slate-600">{isOnline ? "Conectado" : "Sem Conexão"}</span>
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> 
-              Sincronizador Múltiplo: <span className="font-bold text-slate-700">7 Telas de Signage Conectadas</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${screens.some(s => s.status === "online") ? "bg-blue-500 animate-pulse" : "bg-slate-400"}`}></span> 
+              Sincronizador Múltiplo: <span className="font-bold text-slate-700">
+                {screens.filter(s => s.status === "online").length} {screens.filter(s => s.status === "online").length === 1 ? "Tela" : "Telas"} em funcionamento ({screens.length} total)
+              </span>
             </span>
           </div>
           <div>Vitrion Digital Display Controller • © 2026</div>
