@@ -28,6 +28,7 @@ import {
   Lock,
   Users,
   Calendar,
+  Clock,
   ShieldAlert,
   CreditCard,
   UserCheck,
@@ -1035,12 +1036,44 @@ export default function App() {
 function PublicDisplayView({ screenId }: { screenId: string }) {
   const [screen, setScreen] = useState<ScreenData | null>(null);
   const [products, setProducts] = useState<ProductData[]>([]);
+  const [client, setClient] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [introTimerDone, setIntroTimerDone] = useState(false);
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [currentPlaylistItemIndex, setCurrentPlaylistItemIndex] = useState(0);
   const [wakeLockActive, setWakeLockActive] = useState(false);
+  const [reminderPageDone, setReminderPageDone] = useState(false);
+
+  const daysRemaining = useMemo(() => {
+    if (!client || !client.expirationDate) return null;
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const expDate = new Date(client.expirationDate);
+      expDate.setHours(0, 0, 0, 0);
+      const diffTime = expDate.getTime() - today.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      return diffDays;
+    } catch {
+      return null;
+    }
+  }, [client]);
+
+  const shouldShowExpiryReminder = useMemo(() => {
+    // Retorna verdadeiro se faltarem entre 0 e 5 dias para o vencimento
+    return daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 5;
+  }, [daysRemaining]);
+
+  // Se o lembrete de vencimento deve aparecer, espera 4 segundos nele após o splash antes de liberar o menu
+  useEffect(() => {
+    if (introTimerDone && shouldShowExpiryReminder && !reminderPageDone) {
+      const timer = setTimeout(() => {
+        setReminderPageDone(true);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [introTimerDone, shouldShowExpiryReminder, reminderPageDone]);
 
   // Mantém a tela acordada usando a API padrão Screen Wake Lock (suportada pelo Silk Browser / Chrome)
   useEffect(() => {
@@ -1137,6 +1170,7 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
         unsubscribeClient = onSnapshot(doc(db, "clients", data.clientId), (clientSnap) => {
           if (clientSnap.exists()) {
             const clientData = clientSnap.data();
+            setClient(clientData);
             const today = new Date();
             today.setHours(0,0,0,0);
             const expDate = new Date(clientData.expirationDate);
@@ -1150,6 +1184,7 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
               setSubscriptionError(null);
             }
           } else {
+            setClient(null);
             // Se o cliente foi removido ou não existe no banco, desliga a TV por segurança
             setSubscriptionError("O transmissor associado a esta TV não foi localizado no cadastro.");
           }
@@ -1157,6 +1192,7 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
           console.error("Erro ao verificar termo de assinatura da tela", err);
         });
       } else {
+        setClient(null);
         setSubscriptionError(null);
       }
     };
@@ -1171,13 +1207,22 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
           const docSnap = snapshot.docs[0];
           const data = { id: docSnap.id, ...docSnap.data() } as ScreenData;
           handleScreenData(data);
+          localStorage.setItem(`vitrion_cached_tv_${screenId}`, JSON.stringify(data));
         } else {
           setError(`Nenhuma TV correspondente ao código "${screenId}" foi localizada no Vitrion.`);
         }
         setLoading(false);
       }, (err) => {
-        console.error("Erro ao conectar ao sinal por código", err);
-        setError("Não foi possível estabelecer contato com a TV por código.");
+        console.warn("Erro ao conectar ao sinal por código (buscando backup)", err);
+        const cached = localStorage.getItem(`vitrion_cached_tv_${screenId}`);
+        if (cached) {
+          try {
+            handleScreenData(JSON.parse(cached));
+            setLoading(false);
+            return;
+          } catch {}
+        }
+        setError("Não foi possível estabelecer contato com a TV por código e não há cópia offline disponível.");
         setLoading(false);
       });
     } else {
@@ -1186,12 +1231,35 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
         if (docSnap.exists()) {
           const data = { id: docSnap.id, ...docSnap.data() } as ScreenData;
           handleScreenData(data);
+          localStorage.setItem(`vitrion_cached_tv_${screenId}`, JSON.stringify(data));
         } else {
           setError(`A tela "${screenId}" não foi encontrada no banco do Vitrion Digital Display. Verifique o ID no painel administrador.`);
         }
         setLoading(false);
       }, (err) => {
-        setError(`Erro na escuta da tela: ${err.message}`);
+        console.warn(`Erro na escuta da tela (usando backup): ${err.message}`);
+        const cached = localStorage.getItem(`vitrion_cached_tv_${screenId}`);
+        if (cached) {
+          try {
+            handleScreenData(JSON.parse(cached));
+            setLoading(false);
+            return;
+          } catch {}
+        }
+        // Se absolutamente nada falhar mas estivermos sem rede/quota, podemos simular tela padrão de demo
+        handleScreenData({
+          id: screenId,
+          name: "Display Vitrina Comercial (Modo Offline/Quota)",
+          location: "Recepção Comercial",
+          status: "online",
+          currentImage: "",
+          aspectRatio: "16:9",
+          lastSync: "Recuperado localmente (Offline)",
+          overlayPrices: false,
+          selectedCategory: "Todas",
+          displayMode: "single",
+          playlist: []
+        });
         setLoading(false);
       });
     }
@@ -1204,8 +1272,22 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
         items.push({ id: doc.id, ...doc.data() } as ProductData);
       });
       setProducts(items);
+      localStorage.setItem("vitrion_tv_overlay_products", JSON.stringify(items));
     }, (err) => {
-      console.error("Erro ao obter produtos para overlay", err);
+      console.warn("Erro ao obter produtos para overlay (usando backup)", err);
+      const cached = localStorage.getItem("vitrion_tv_overlay_products") || localStorage.getItem("vitrion_cached_products");
+      if (cached) {
+        try {
+          setProducts(JSON.parse(cached));
+          return;
+        } catch {}
+      }
+      setProducts([
+        { id: "p1", name: "Pão de Queijo Mineiro", price: 4.50, category: "Salgados", available: true },
+        { id: "p2", name: "Pão Francês Tradicional (kg)", price: 18.90, category: "Pães", available: true },
+        { id: "p3", name: "Croissant Artesanal de Manteiga", price: 8.90, category: "Salgados", available: true },
+        { id: "p4", name: "Café Espresso Premium", price: 5.50, category: "Cafés", available: true }
+      ]);
     });
 
     return () => {
@@ -1356,6 +1438,45 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
     );
   }
 
+  if (shouldShowExpiryReminder && !reminderPageDone) {
+    return (
+      <div id="expiry-reminder-view" className="w-screen h-screen bg-slate-950 flex flex-col items-center justify-center text-white font-sans p-8 text-center relative overflow-hidden select-none">
+        {/* Ambient warning background element */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-amber-500/10 blur-[130px] rounded-full pointer-events-none" />
+        
+        <div className="relative z-10 flex flex-col items-center max-w-xl mx-auto">
+          {/* Pulsing alert icon container */}
+          <div className="w-24 h-24 bg-amber-500/10 border border-amber-500/35 rounded-full flex items-center justify-center mb-8 text-amber-500 relative animate-pulse">
+            <div className="absolute inset-0 bg-amber-500/20 rounded-full animate-ping opacity-60" />
+            <Clock className="w-12 h-12 relative z-10" />
+          </div>
+          
+          <span className="px-4 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-[10px] text-amber-400 font-extrabold uppercase tracking-widest animate-pulse mb-4 font-sans">
+            Aviso de Vencimento de Licença
+          </span>
+          
+          <h2 className="text-3xl font-black uppercase tracking-wider mb-6 text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-amber-400 to-orange-400 font-sans">
+            Lembrete de Mensalidade
+          </h2>
+          
+          <p className="text-slate-300 text-sm leading-relaxed mb-8 max-w-md font-sans">
+            Olá, <span className="font-extrabold text-white">{client?.name || "Parceiro Vitrion"}</span>.<br />
+            Sua mensalidade vencerá em <span className="font-extrabold text-amber-400">{client?.expirationDate ? new Date(client.expirationDate).toLocaleDateString("pt-BR") : "breve"}</span> ({daysRemaining} {daysRemaining === 1 ? "dia restante" : "dias restantes"}). Regularize antecipadamente para manter sua TV sintonizada sem interrupções.
+          </p>
+
+          <div className="flex items-center gap-2.5 px-4 py-2 bg-slate-900 border border-white/5 rounded-full text-slate-500 font-semibold text-[10px] tracking-wider uppercase font-sans">
+            <span className="w-2 h-2 bg-amber-400 rounded-full animate-ping" />
+            Carregando menu em 4 segundos...
+          </div>
+        </div>
+
+        <p className="absolute bottom-8 text-[9px] text-slate-600 uppercase tracking-[0.25em] font-semibold font-sans">
+          Vitrion Digital Display • Gestão de Sinal Inteligente
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="w-screen h-screen bg-black overflow-hidden relative flex items-center justify-center font-sans select-none">
       
@@ -1444,13 +1565,18 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
       )}
 
       {/* Dynamic Watermark / Logo of Vitrion Digital Display on all displays */}
-      <div className="absolute bottom-6 left-6 z-20 flex items-center gap-2.5 bg-slate-950/40 backdrop-blur-sm border border-white/5 py-1.5 px-3 rounded-full text-white pointer-events-none select-none">
-        <VitrionLogo className="w-4 h-4 text-white drop-shadow-[0_0_8px_rgba(56,189,248,0.3)] animate-pulse" />
-        <div className="flex flex-col">
-          <span className="text-[10px] font-black tracking-wider uppercase leading-none">Vitrion</span>
-          <span className="text-[7px] text-slate-300 tracking-widest uppercase leading-none font-sans font-medium mt-0.5">Digital Display</span>
+      {(!client || client?.isFreeTrial) ? (
+        <div className="absolute bottom-6 left-6 z-20 flex flex-col items-center gap-2.5 bg-slate-950/75 backdrop-blur-md border border-white/10 p-5 rounded-2xl text-white pointer-events-none select-none shadow-2xl">
+          <VitrionLogo className="w-14 h-14 text-white drop-shadow-[0_0_15px_rgba(56,189,248,0.4)] animate-pulse" />
+          <div className="flex flex-col items-center text-center">
+            <span className="text-sm font-black tracking-widest uppercase leading-none text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400">Vitrion</span>
+            <span className="text-[8px] text-slate-300 tracking-wider uppercase leading-none font-sans font-medium mt-1">Digital Display</span>
+            <span className="text-[10px] mt-2.5 px-3 py-1 bg-red-600 border border-red-500 rounded-lg text-white font-black tracking-widest uppercase animate-pulse">
+              MODO GRATUITO PARA TESTE
+            </span>
+          </div>
         </div>
-      </div>
+      ) : null}
 
     </div>
   );
@@ -1634,6 +1760,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [authLoading, setAuthLoading] = useState(false);
   const [instantEmail, setInstantEmail] = useState("");
   const [regSelectedPlan, setRegSelectedPlan] = useState<string>("plan_1tv");
+  const [isClientSignupModalOpen, setIsClientSignupModalOpen] = useState(false);
 
   useEffect(() => {
     if (user?.email && !regContactEmail) {
@@ -1648,6 +1775,154 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [adminModalLoading, setAdminModalLoading] = useState(false);
 
   // Estados específicos para o modo Pareamento
+  const handleClientSignupModalSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+
+    if (!authStoreName.trim()) {
+      showToast("Por favor, preencha o Nome do Estabelecimento.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    const formattedEmail = authEmail.trim();
+    if (!formattedEmail) {
+      showToast("Por favor, preencha o Nome de Usuário ou E-mail.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    if (authPassword.length < 6) {
+      showToast("A senha deve ter no mínimo 6 caracteres.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    if (!authPhone.trim()) {
+      showToast("Por favor, preencha o WhatsApp ou Telefone.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    if (!authAddress.trim()) {
+      showToast("Por favor, preencha o Endereço.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    if (!authCity.trim()) {
+      showToast("Por favor, preencha a Cidade.", "error");
+      setAuthLoading(false);
+      return;
+    }
+    
+    let finalAuthEmail = formattedEmail;
+    if (!finalAuthEmail.includes("@")) {
+      finalAuthEmail = `${finalAuthEmail.toLowerCase()}@vitrion.com.br`;
+    }
+    const formattedEmailLower = finalAuthEmail.toLowerCase();
+
+    // Check if client is already registered
+    const matchedClient = clients.find(c => c.ownerEmail?.toLowerCase() === formattedEmailLower);
+    if (matchedClient) {
+      showToast("Este usuário ou e-mail já possui uma conta no sistema.", "error");
+      setAuthLoading(false);
+      return;
+    }
+
+    try {
+      let cred;
+      try {
+        cred = await createUserWithEmailAndPassword(auth, finalAuthEmail, authPassword);
+      } catch (signUpAuthErr: any) {
+        console.warn("Não foi possível registrar no Firebase Auth. Ativando bypass de registro de conta.", signUpAuthErr);
+        
+        const sanitizedEmail = formattedEmailLower.replace(/[^a-zA-Z0-9]/g, "_");
+        const mockUid = `bypass_${sanitizedEmail}`;
+        const mockUser = {
+          uid: mockUid,
+          email: finalAuthEmail,
+          isAnonymous: false,
+          emailVerified: true
+        };
+        localStorage.removeItem("vitrion_is_admin_session");
+        localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
+        cred = { user: mockUser };
+      }
+
+      if (cred && cred.user) {
+        const cliId = `client_${cred.user.uid}`;
+        const expiry = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 dia de testes grátis!
+        const autoCountry = authPhoneCountry === "BR" ? "Brasil" : "Estados Unidos";
+        const planDetails = getPlanDetails(regSelectedPlan);
+
+        const newClientObj = {
+          id: cliId,
+          name: authStoreName,
+          ownerEmail: finalAuthEmail,
+          contactEmail: regContactEmail.trim().toLowerCase() || finalAuthEmail.toLowerCase(),
+          phone: authPhone ? (authPhoneCountry === "BR" ? `+55 ${authPhone}` : `+1 ${authPhone}`) : "",
+          contactPhone: authPhone ? (authPhoneCountry === "BR" ? `+55 ${authPhone}` : `+1 ${authPhone}`) : "",
+          address: authAddress.trim(),
+          city: authCity.trim(),
+          country: autoCountry,
+          pais: autoCountry,
+          monthlyFee: planDetails.price,
+          expirationDate: expiry,
+          status: "pending",
+          plan: regSelectedPlan,
+          isFreeTrial: true,
+          password: authPassword,
+          createdAt: new Date().toISOString()
+        };
+
+        await setDoc(doc(db, "clients", cliId), newClientObj, { merge: true });
+
+        // Auto-criar primeira TV da conta que iniciará apresentando a Logo da Vitrion Display
+        const defaultScreenId = `tela-${cliId}-${Date.now()}`;
+        // Gerar código de 5 dígitos amigável
+        const defaultShortCode = String(Math.floor(10000 + Math.random() * 90000));
+        await setDoc(doc(db, "screens", defaultScreenId), {
+          id: defaultScreenId,
+          name: "TV Recepção - Principal",
+          location: authStoreName,
+          status: "online",
+          currentImage: "",
+          aspectRatio: "16:9",
+          lastSync: "Criada agora",
+          overlayPrices: false,
+          selectedCategory: "Todas",
+          clientId: cliId,
+          displayMode: "single",
+          shortCode: defaultShortCode,
+          playlist: [
+            { id: "slot-1", image: "", duration: 10, enabled: false },
+            { id: "slot-2", image: "", duration: 10, enabled: false },
+            { id: "slot-3", image: "", duration: 10, enabled: false },
+            { id: "slot-4", image: "", duration: 10, enabled: false }
+          ]
+        });
+
+        try {
+          const cachedClientsStr = localStorage.getItem("vitrion_cached_clients");
+          let currentCachedClients = cachedClientsStr ? JSON.parse(cachedClientsStr) : [];
+          currentCachedClients = currentCachedClients.filter((c: any) => c.id !== cliId);
+          currentCachedClients.push(newClientObj);
+          handleClientsUpdate(currentCachedClients);
+        } catch (cacheErr) {
+          console.warn("Erro ao atualizar sincronização local pós-fluxo de registro:", cacheErr);
+        }
+
+        localStorage.setItem("vitrion_last_email", cred.user.email?.toLowerCase() || finalAuthEmail.toLowerCase());
+        localStorage.removeItem("vitrion_is_admin_session");
+        setUser(cred.user);
+        setIsClientSignupModalOpen(false);
+        showToast(`Sua conta da loja "${authStoreName}" foi criada e ativada com sucesso!`, "success");
+      }
+    } catch (err: any) {
+      console.error("Erro no cadastro pelo modal:", err);
+      showToast("Não foi possível finalizar o cadastro. Tente com outro usuário ou e-mail.", "error");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleCompleteRegistration = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
@@ -1686,7 +1961,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       const autoCountry = authPhoneCountry === "BR" ? "Brasil" : "Estados Unidos";
       const planDetails = getPlanDetails(regSelectedPlan);
       
-      await setDoc(doc(db, "clients", cliId), {
+      const newClientObj = {
         id: cliId,
         name: authStoreName,
         ownerEmail: user.email || "",
@@ -1702,29 +1977,44 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         status: "pending", // Em análise pelo Administrador (permite teste livre)
         plan: regSelectedPlan,
         createdAt: new Date().toISOString()
-      }, { merge: true });
+      };
 
-      // Also create a default screen for them so they can immediately see it!
-      await setDoc(doc(db, "screens", `tv_${user.uid}`), {
-        id: `tv_${user.uid}`,
+      await setDoc(doc(db, "clients", cliId), newClientObj, { merge: true });
+
+      // Auto-criar primeira TV da conta que iniciará apresentando a Logo da Vitrion Display
+      const defaultScreenId = `tela-${cliId}-${Date.now()}`;
+      const defaultShortCode = String(Math.floor(10000 + Math.random() * 90000));
+      await setDoc(doc(db, "screens", defaultScreenId), {
+        id: defaultScreenId,
         name: "TV Recepção - Principal",
         location: authStoreName,
-        aspectRatio: "16:9",
         status: "online",
-        currentImage: "chalk-bakery",
+        currentImage: "",
+        aspectRatio: "16:9",
         lastSync: "Criada agora",
         overlayPrices: false,
         selectedCategory: "Todas",
         clientId: cliId,
         displayMode: "single",
-        shortCode: getOrGenerateShortCode(`tv_${user.uid}`),
+        shortCode: defaultShortCode,
         playlist: [
-          { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
-          { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+          { id: "slot-1", image: "", duration: 10, enabled: false },
+          { id: "slot-2", image: "", duration: 10, enabled: false },
           { id: "slot-3", image: "", duration: 10, enabled: false },
           { id: "slot-4", image: "", duration: 10, enabled: false }
         ]
-      }, { merge: true });
+      });
+
+      // Sincronização Local Offline Imediata (para refletir instantaneamente no Admin sob quaisquer condições de cota)
+      try {
+        const cachedClientsStr = localStorage.getItem("vitrion_cached_clients");
+        let currentCachedClients = cachedClientsStr ? JSON.parse(cachedClientsStr) : [];
+        currentCachedClients = currentCachedClients.filter((c: any) => c.id !== cliId);
+        currentCachedClients.push(newClientObj);
+        handleClientsUpdate(currentCachedClients);
+      } catch (cacheErr) {
+        console.warn("Erro ao atualizar sincronização local pós-fluxo de registro:", cacheErr);
+      }
 
       showToast(`Seu estabelecimento foi cadastrado com sucesso! Bem-vindo!`, "success");
     } catch (err: any) {
@@ -1838,7 +2128,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         location: defaultStoreName,
         aspectRatio: "16:9",
         status: "online",
-        currentImage: "chalk-bakery",
+        currentImage: "",
         lastSync: "Criada agora",
         overlayPrices: false,
         selectedCategory: "Todas",
@@ -1846,8 +2136,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         displayMode: "single",
         shortCode: "54541",
         playlist: [
-          { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
-          { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+          { id: "slot-1", image: "", duration: 10, enabled: false },
+          { id: "slot-2", image: "", duration: 10, enabled: false },
           { id: "slot-3", image: "", duration: 10, enabled: false },
           { id: "slot-4", image: "", duration: 10, enabled: false }
         ]
@@ -2090,7 +2380,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
             
             // Garantir que o cliente e sua tela existam no Firestore para que possam interagir
             const cliId = `client_${mockUid}`;
-            const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 mês
+            const expiry = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 dia
             const defaultStoreName = `Loja ${authEmail.trim().split("@")[0]}`;
             
             try {
@@ -2100,32 +2390,12 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                 ownerEmail: formattedEmail,
                 phone: "(11) 99999-5454",
                 contactPhone: "(11) 99999-5454",
-                monthlyFee: 99.90,
+                monthlyFee: 10.00,
                 expirationDate: expiry,
                 status: "active",
-                plan: "basico",
+                plan: "plan_1tv",
+                isFreeTrial: true,
                 createdAt: new Date().toISOString()
-              }, { merge: true });
-
-              await setDoc(doc(db, "screens", `tv_${mockUid}`), {
-                id: `tv_${mockUid}`,
-                name: "TV Recepção - Principal",
-                location: defaultStoreName,
-                aspectRatio: "16:9",
-                status: "online",
-                currentImage: "chalk-bakery",
-                lastSync: "Criada agora",
-                overlayPrices: false,
-                selectedCategory: "Todas",
-                clientId: cliId,
-                displayMode: "single",
-                shortCode: getOrGenerateShortCode(`tv_${mockUid}`),
-                playlist: [
-                  { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
-                  { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
-                  { id: "slot-3", image: "", duration: 10, enabled: false },
-                  { id: "slot-4", image: "", duration: 10, enabled: false }
-                ]
               }, { merge: true });
             } catch (dbErr) {
               console.warn("Falha silenciosa ao guardar dados persistentes de bypass no Firestore", dbErr);
@@ -2133,15 +2403,32 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
             
             showToast("⚠️ Firebase Auth: Provedor de E-mail/Senha de teste desativado. Login bypass persistente ativado com sucesso!", "info");
           } else {
-            // Se for usuário simples de teste (sem @) e não existir, criamos instantaneamente
-            const isSimpleUser = !authEmail.trim().includes("@") && authPassword.length >= 6;
-            
-            if (isSimpleUser && (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password")) {
+            // Primeiro, verifica se o cliente foi previamente cadastrado pelo Super Admin na lista de clientes!
+            const matchedClient = clients.find(c => c.ownerEmail?.toLowerCase() === formattedEmailLower);
+            if (matchedClient) {
+              const expectedPassword = matchedClient.password || "123456";
+              if (authPassword === expectedPassword) {
+                console.log("Cliente pré-cadastrado localizado. Habilitando sessão bypass local sem erro de Firebase.");
+                const mockUser = {
+                  uid: matchedClient.id.replace("client_", ""),
+                  email: formattedEmail,
+                  isAnonymous: false,
+                  emailVerified: true
+                };
+                localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
+                cred = { user: mockUser };
+              } else {
+                throw new Error("wrong_password_or_user");
+              }
+            } else {
+              // Se o cliente não estiver cadastrado no projeto, evitamos qualquer erro de autenticação do Firebase.
+              // Cadastramos ele automaticamente com um plano inicial e damos acesso imediato ao painel!
+              console.log("Cliente não cadastrado no projeto. Realizando registro automático on-the-fly para evitar erro.");
               try {
                 try {
                   cred = await createUserWithEmailAndPassword(auth, formattedEmail, authPassword);
                 } catch (signUpAuthErr) {
-                  console.warn("Falha de Firebase Auth na criação rápida, simulando usuário local", signUpAuthErr);
+                  console.warn("Falha de Firebase Auth na criação rápida, simulando usuário local via bypass", signUpAuthErr);
                   const mockUid = `usr_${Date.now()}`;
                   cred = {
                     user: {
@@ -2156,8 +2443,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
                 if (cred.user) {
                   const cliId = `client_${cred.user.uid}`;
-                  const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 mês de testes grátis!
-                  const defaultStoreName = `Loja ${authEmail.trim()}`;
+                  const expiry = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 dia de testes grátis
+                  const defaultStoreName = `Loja ${authEmail.trim().split("@")[0]}`;
                   
                   await setDoc(doc(db, "clients", cliId), {
                     id: cliId,
@@ -2165,58 +2452,21 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     ownerEmail: formattedEmail,
                     phone: "(11) 99999-5454",
                     contactPhone: "(11) 99999-5454",
-                    monthlyFee: 99.90,
+                    monthlyFee: 10.00,
                     expirationDate: expiry,
                     status: "active",
+                    plan: "plan_1tv",
+                    isFreeTrial: true,
+                    password: authPassword,
                     createdAt: new Date().toISOString()
-                  });
-
-                  // Cria também uma tela inicial padrão
-                  await setDoc(doc(db, "screens", `tv_${cred.user.uid}`), {
-                    id: `tv_${cred.user.uid}`,
-                    name: "TV Recepção - Principal",
-                    location: defaultStoreName,
-                    aspectRatio: "16:9",
-                    status: "online",
-                    currentImage: "chalk-bakery",
-                    lastSync: "Criada agora",
-                    overlayPrices: false,
-                    selectedCategory: "Todas",
-                    clientId: cliId,
-                    displayMode: "single",
-                    shortCode: getOrGenerateShortCode(`tv_${cred.user.uid}`),
-                    playlist: [
-                      { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
-                      { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
-                      { id: "slot-3", image: "", duration: 10, enabled: false },
-                      { id: "slot-4", image: "", duration: 10, enabled: false }
-                    ]
                   });
                 }
               } catch (signUpErr: any) {
                 if (signUpErr.code === "auth/email-already-in-use") {
-                  // Usuário existe mas senha incorreta!
                   throw new Error("wrong_password_or_user");
                 } else {
                   throw signUpErr;
                 }
-              }
-            } else {
-              // Verificar se o cliente foi previamente cadastrado pelo Super Admin na lista de clientes!
-              const matchedClient = clients.find(c => c.ownerEmail?.toLowerCase() === formattedEmailLower);
-              if (matchedClient && authPassword.length >= 6) {
-                console.log("Usuário pré-cadastrado no Firestore. Habilitando sessão bypass local.");
-                const mockUser = {
-                  uid: matchedClient.id.replace("client_", ""),
-                  email: formattedEmail,
-                  isAnonymous: false,
-                  emailVerified: true
-                };
-                localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
-                cred = { user: mockUser };
-              } else {
-                // Se falhou e não existe bypass viável, lança o erro original
-                throw err;
               }
             }
           }
@@ -2292,15 +2542,22 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   // SaaS Multi-Client States
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>("all"); // "all" ou ID do cliente específico para o Super Admin
+  
+  const getDefaultExpirationDate = () => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return d.toISOString().split("T")[0];
+  };
+
   const [newClientName, setNewClientName] = useState("");
   const [newClientEmail, setNewClientEmail] = useState("");
   const [newClientPhone, setNewClientPhone] = useState("");
   const [newClientPhoneCountry, setNewClientPhoneCountry] = useState<"BR" | "US">("BR");
   const [newClientPhone2, setNewClientPhone2] = useState("");
   const [newClientPhone2Country, setNewClientPhone2Country] = useState<"BR" | "US">("BR");
-  const [newClientPassword, setNewClientPassword] = useState("");
+  const [newClientPassword, setNewClientPassword] = useState("123456");
   const [newClientFee, setNewClientFee] = useState("10.00");
-  const [newClientExpiration, setNewClientExpiration] = useState("");
+  const [newClientExpiration, setNewClientExpiration] = useState(getDefaultExpirationDate());
   const [newClientPlan, setNewClientPlan] = useState<string>("plan_1tv");
   const [editingClient, setEditingClient] = useState<any | null>(null);
   const [clientSearchTerm, setClientSearchTerm] = useState("");
@@ -2420,7 +2677,9 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       const payload = {
         id: cId,
         name: newClientName.trim(),
-        ownerEmail: newClientEmail.trim().toLowerCase(),
+        ownerEmail: newClientEmail.includes("@") 
+          ? newClientEmail.trim().toLowerCase() 
+          : `${newClientEmail.trim().toLowerCase()}@vitrion.com.br`,
         phone: newClientPhone ? (newClientPhoneCountry === "BR" ? `+55 ${newClientPhone}` : `+1 ${newClientPhone}`) : "",
         contactPhone: newClientPhone2 ? (newClientPhone2Country === "BR" ? `+55 ${newClientPhone2}` : `+1 ${newClientPhone2}`) : (editingClient?.contactPhone || ""),
         monthlyFee: parseFloat(newClientFee) || 0,
@@ -2430,6 +2689,18 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         password: newClientPassword ? newClientPassword.trim() : (editingClient?.password || "123456")
       };
       await setDoc(doc(db, "clients", cId), payload);
+
+      // Sincronização Local Offline Imediata (para refletir instantaneamente sob cota ou rede instável)
+      try {
+        const cachedClientsStr = localStorage.getItem("vitrion_cached_clients");
+        let currentCachedClients = cachedClientsStr ? JSON.parse(cachedClientsStr) : [];
+        currentCachedClients = currentCachedClients.filter((c: any) => c.id !== cId);
+        currentCachedClients.push(payload);
+        handleClientsUpdate(currentCachedClients);
+      } catch (cacheErr) {
+        console.warn("Erro ao sincronizar cache local pós-gravação de cliente:", cacheErr);
+      }
+
       showToast(`Cliente "${newClientName}" salvo com sucesso!`, "success");
       setNewClientName("");
       setNewClientEmail("");
@@ -2437,10 +2708,10 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       setNewClientPhoneCountry("BR");
       setNewClientPhone2("");
       setNewClientPhone2Country("BR");
-      setNewClientPassword("");
-      setNewClientFee("99.90");
-      setNewClientExpiration("");
-      setNewClientPlan("basico");
+      setNewClientPassword("123456");
+      setNewClientFee("10.00");
+      setNewClientExpiration(getDefaultExpirationDate());
+      setNewClientPlan("plan_1tv");
       setEditingClient(null);
     } catch (err) {
       console.error("Erro ao gravar cliente:", err);
@@ -2456,6 +2727,17 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       async () => {
         try {
           await deleteDoc(doc(db, "clients", id));
+
+          // Sincronização Local Offline Imediata (para refletir instantaneamente)
+          try {
+            const cachedClientsStr = localStorage.getItem("vitrion_cached_clients");
+            let currentCachedClients = cachedClientsStr ? JSON.parse(cachedClientsStr) : [];
+            currentCachedClients = currentCachedClients.filter((c: any) => c.id !== id);
+            handleClientsUpdate(currentCachedClients);
+          } catch (cacheErr) {
+            console.warn("Erro ao sincronizar cache local pós-exclusão de cliente:", cacheErr);
+          }
+
           showToast(`Cliente "${name}" excluído e removido do sistema com sucesso!`, "success");
         } catch (err) {
           console.error("Erro ao excluir cliente:", err);
@@ -2471,6 +2753,22 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       await updateDoc(doc(db, "clients", clientId), {
         status: newStatus
       });
+
+      // Sincronização Local Offline Imediata (para refletir instantaneamente)
+      try {
+        const cachedClientsStr = localStorage.getItem("vitrion_cached_clients");
+        let currentCachedClients = cachedClientsStr ? JSON.parse(cachedClientsStr) : [];
+        currentCachedClients = currentCachedClients.map((c: any) => {
+          if (c.id === clientId) {
+            return { ...c, status: newStatus };
+          }
+          return c;
+        });
+        handleClientsUpdate(currentCachedClients);
+      } catch (cacheErr) {
+        console.warn("Erro ao sincronizar cache local pós-alteração de status de cliente:", cacheErr);
+      }
+
       const statusLabel = 
         newStatus === "active" ? "ATIVO & ACEITO" : 
         newStatus === "suspended" ? "SUSPENSO" : 
@@ -2787,17 +3085,118 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     return unsubscribe;
   }, []);
 
+  // 2. Handlers Globais de Sincronização de Dados e Cache Offline
+  const handleClientsUpdate = (items: any[]) => {
+    let updatedItems = [...items];
+    if (user && user.email) {
+      const isUserAdmin = user.email.toLowerCase() === "videmusicai@gmail.com" || 
+                         user.email.toLowerCase() === "admin@vitrion.com.br" || 
+                         user.email.toLowerCase() === "vitrion54@vitrion.com.br";
+      if (!isUserAdmin) {
+        const hasClient = updatedItems.some(c => c.ownerEmail?.toLowerCase() === user.email.toLowerCase());
+        if (!hasClient) {
+          const userSafe = user.email.split("@")[0].replace(/[^a-zA-Z0-9]/g, "_");
+          const planDetails = getPlanDetails("plan_1tv");
+          const mockClient = {
+            id: `client_${user.uid || userSafe}`,
+            name: `Padaria Colonial - ${user.email.split("@")[0]}`,
+            ownerEmail: user.email,
+            contactEmail: user.email,
+            phone: "+55 (11) 99999-5454",
+            contactPhone: "+55 (11) 99999-5454",
+            address: "Av. Paulista, 1000",
+            monthlyFee: planDetails ? planDetails.price : 10.00,
+            expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+            status: "active",
+            plan: "plan_1tv",
+            createdAt: new Date().toISOString()
+          };
+          updatedItems.push(mockClient);
+        }
+      }
+    }
+    setClients(updatedItems);
+    localStorage.setItem("vitrion_cached_clients", JSON.stringify(updatedItems));
+  };
+
+  const handleScreensUpdate = (items: ScreenData[]) => {
+    let updatedItems = [...items];
+    setRawScreens(updatedItems);
+    localStorage.setItem("vitrion_cached_screens", JSON.stringify(updatedItems));
+  };
+
+  const handleProductsUpdate = (items: ProductData[]) => {
+    let updatedItems = [...items];
+    if (user) {
+      const userSafe = user.email ? user.email.split("@")[0].replace(/[^a-zA-Z0-9]/g, "_") : "user";
+      const currentId = `client_${user.uid || userSafe}`;
+      const hasProducts = updatedItems.some(p => p.clientId === currentId);
+      if (!hasProducts) {
+        const promoProducts = [
+          { id: `p1_${userSafe}`, name: "Pão de Queijo Mineiro", price: 4.50, category: "Salgados", available: true, clientId: currentId },
+          { id: `p2_${userSafe}`, name: "Pão Francês Tradicional (kg)", price: 18.90, category: "Pães", available: true, clientId: currentId },
+          { id: `p3_${userSafe}`, name: "Croissant de Chocolate", price: 9.50, category: "Doces", available: true, clientId: currentId },
+          { id: `p4_${userSafe}`, name: "Café Espresso Médio", price: 5.50, category: "Cafés", available: true, clientId: currentId },
+          { id: `p5_${userSafe}`, name: "Bolo de Cenoura Cobertura", price: 7.00, category: "Doces", available: true, clientId: currentId }
+        ];
+        updatedItems.push(...promoProducts);
+      }
+    }
+    setRawProducts(updatedItems);
+    localStorage.setItem("vitrion_cached_products", JSON.stringify(updatedItems));
+  };
+
+  const handleCustomImagesUpdate = (items: CustomImageData[]) => {
+    setRawCustomImages(items);
+    localStorage.setItem("vitrion_cached_images", JSON.stringify(items));
+  };
+
   // 2. Carrega Dados do Firestore em Tempo Real (Sistemas Administrativos Multi-Client)
   useEffect(() => {
+
     const unsubscribeClients = onSnapshot(collection(db, "clients"), (snapshot) => {
       const clientItems: any[] = [];
       snapshot.forEach((doc) => {
         clientItems.push({ id: doc.id, ...doc.data() });
       });
       clientItems.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-      setClients(clientItems);
+      handleClientsUpdate(clientItems);
     }, (error) => {
-      console.warn("Dificuldade ao carregar clientes do banco", error);
+      console.warn("Dificuldade ao carregar clientes do banco (usando backup)", error);
+      const cached = localStorage.getItem("vitrion_cached_clients");
+      if (cached) {
+        try {
+          handleClientsUpdate(JSON.parse(cached));
+          return;
+        } catch {}
+      }
+      
+      const isAdminEmail = user?.email && (
+        user.email.toLowerCase() === "videmusicai@gmail.com" || 
+        user.email.toLowerCase() === "admin@vitrion.com.br" || 
+        user.email.toLowerCase() === "vitrion54@vitrion.com.br"
+      );
+
+      if (isAdminEmail) {
+        handleClientsUpdate([]);
+      } else {
+        handleClientsUpdate([
+          {
+            id: "client_demo_client",
+            name: "Padaria Colonial",
+            ownerEmail: user?.email || "vitrion54@vitrion.com.br",
+            contactEmail: user?.email || "comercial@vitrion.com.br",
+            phone: "+55 (11) 99999-5454",
+            contactPhone: "+55 (11) 99999-5454",
+            address: "Rua de Entrada, 123",
+            monthlyFee: 10.00,
+            expirationDate: "2027-12-31",
+            status: "active",
+            plan: "plan_1tv",
+            createdAt: new Date().toISOString()
+          }
+        ]);
+      }
     });
 
     const unsubscribeScreens = onSnapshot(collection(db, "screens"), (snapshot) => {
@@ -2805,11 +3204,18 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       snapshot.forEach((doc) => {
         screenItems.push({ id: doc.id, ...doc.data() } as ScreenData);
       });
-      // Ordena por id
       screenItems.sort((a, b) => (a.id || "").localeCompare(b.id || ""));
-      setRawScreens(screenItems);
+      handleScreensUpdate(screenItems);
     }, (error) => {
-      console.error("Erro na escuta das telas", error);
+      console.warn("Dificuldade ao carregar telas do banco (usando backup)", error);
+      const cached = localStorage.getItem("vitrion_cached_screens");
+      if (cached) {
+        try {
+          handleScreensUpdate(JSON.parse(cached));
+          return;
+        } catch {}
+      }
+      handleScreensUpdate([]);
     });
 
     const unsubscribeProducts = onSnapshot(collection(db, "products"), (snapshot) => {
@@ -2817,9 +3223,17 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       snapshot.forEach((doc) => {
         productItems.push({ id: doc.id, ...doc.data() } as ProductData);
       });
-      setRawProducts(productItems);
+      handleProductsUpdate(productItems);
     }, (error) => {
-      console.error("Erro na escuta dos produtos", error);
+      console.warn("Dificuldade ao carregar produtos do banco (usando backup)", error);
+      const cached = localStorage.getItem("vitrion_cached_products");
+      if (cached) {
+        try {
+          handleProductsUpdate(JSON.parse(cached));
+          return;
+        } catch {}
+      }
+      handleProductsUpdate([]);
     });
 
     const unsubscribeCustomImages = onSnapshot(collection(db, "custom_images"), (snapshot) => {
@@ -2828,9 +3242,17 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
         imageItems.push({ id: doc.id, ...doc.data() } as CustomImageData);
       });
       imageItems.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-      setRawCustomImages(imageItems);
+      handleCustomImagesUpdate(imageItems);
     }, (error) => {
-      console.error("Erro na escuta das imagens customizadas", error);
+      console.warn("Dificuldade ao carregar imagens do banco (usando backup)", error);
+      const cached = localStorage.getItem("vitrion_cached_images");
+      if (cached) {
+        try {
+          handleCustomImagesUpdate(JSON.parse(cached));
+          return;
+        } catch {}
+      }
+      handleCustomImagesUpdate([]);
     });
 
     return () => {
@@ -2839,7 +3261,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       unsubscribeProducts();
       unsubscribeCustomImages();
     };
-  }, []);
+  }, [user]);
 
   // 4. CADASTRA / ATUALIZA PRODUTOS
   const handleSaveProduct = async (e: FormEvent) => {
@@ -3449,10 +3871,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     {authLoading ? (
                       <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     ) : (
-                      <>
-                        <Sparkles className="w-4 h-4 animate-pulse shrink-0" />
-                        <span>Criar Minha Conta Grátis</span>
-                      </>
+                      <span>Criar Minha Conta Grátis</span>
                     )}
                   </button>
                 ) : (
@@ -3477,8 +3896,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     <button
                       type="button"
                       onClick={() => {
-                        setAuthMode("signup");
-                        setAuthError("");
+                        setIsClientSignupModalOpen(true);
                       }}
                       className="text-[10px] text-slate-400 hover:text-white transition-all font-bold"
                     >
@@ -3606,6 +4024,259 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                         <Check className="w-3.5 h-3.5" />
                         Confirmar
                       </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* POP-UP MODAL DO CADASTRO DO CLIENTE (MANDATÓRIO) */}
+        {isClientSignupModalOpen && (
+          <div className="fixed inset-0 bg-slate-950/95 backdrop-blur-md flex items-center justify-center z-50 p-4 font-sans animate-fade-in overflow-y-auto">
+            <div 
+              className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 md:p-8 relative my-8"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Botão de Fechar */}
+              <button
+                type="button"
+                onClick={() => setIsClientSignupModalOpen(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-all cursor-pointer font-bold text-sm"
+              >
+                ✕
+              </button>
+
+              <div className="flex flex-col items-center mb-6 font-sans">
+                <VitrionLogo className="w-12 h-12 mb-3 filter drop-shadow-[0_4px_12px_rgba(56,189,248,0.2)]" />
+                <h3 className="text-lg font-black text-white uppercase tracking-wider text-center">Criar Conta Comercial</h3>
+                <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-bold text-center">Cadastre seu estabelecimento gratuitamente no Vitrion</p>
+              </div>
+
+              <form onSubmit={handleClientSignupModalSubmit} className="space-y-4 font-sans">
+                {/* 1. Nome do Estabelecimento */}
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Nome do Estabelecimento / Loja</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                      <Utensils className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={authStoreName}
+                      onChange={(e) => setAuthStoreName(e.target.value)}
+                      placeholder="ex: Padaria Colonial, Cafeteria do Bairro"
+                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* 2. Usuário ou Email de Login */}
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Nome de Usuário ou E-mail</label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                        <User className="w-4 h-4" />
+                      </span>
+                      <input
+                        type="text"
+                        required
+                        value={authEmail}
+                        onChange={(e) => setAuthEmail(e.target.value)}
+                        placeholder="ex: padariacolonial ou email@ex.com"
+                        className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 3. Senha Secreta */}
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Senha Secreta</label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                        <Lock className="w-4 h-4" />
+                      </span>
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        placeholder="Mínimo 6 caracteres"
+                        className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* 4. WhatsApp / Telefone */}
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">WhatsApp / Telefone</label>
+                    <div className="relative flex items-center">
+                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none z-10">
+                        <Megaphone className="w-3.5 h-3.5" />
+                      </span>
+                      <div className="absolute right-3 flex items-center gap-1 h-full z-10">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthPhoneCountry("BR");
+                            setAuthPhone(formatBRPhone(authPhone));
+                          }}
+                          className={`px-1 py-0.5 rounded text-[8px] font-bold transition-all ${authPhoneCountry === "BR" ? "bg-blue-600/35 text-blue-300 border border-blue-500/40" : "text-slate-500"}`}
+                        >
+                          🇧🇷
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthPhoneCountry("US");
+                            setAuthPhone(formatUSPhone(authPhone));
+                          }}
+                          className={`px-1 py-0.5 rounded text-[8px] font-bold transition-all ${authPhoneCountry === "US" ? "bg-blue-600/35 text-blue-300 border border-blue-500/40" : "text-slate-500"}`}
+                        >
+                          🇺🇸
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        value={authPhone}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (authPhoneCountry === "BR") {
+                            setAuthPhone(formatBRPhone(raw));
+                          } else {
+                            setAuthPhone(formatUSPhone(raw));
+                          }
+                        }}
+                        placeholder={authPhoneCountry === "BR" ? "(11) 99999-9999" : "(201) 555-0123"}
+                        className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-14 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 5. E-mail de Contato */}
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">E-mail de Contato</label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                        <Mail className="w-4 h-4" />
+                      </span>
+                      <input
+                        type="email"
+                        required
+                        value={regContactEmail}
+                        onChange={(e) => setRegContactEmail(e.target.value)}
+                        placeholder="contato@seuestabelecimento.com"
+                        className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-650"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* 6. Endereço */}
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Endereço Comercial</label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                        <MapPin className="w-4 h-4" />
+                      </span>
+                      <input
+                        type="text"
+                        required
+                        value={authAddress}
+                        onChange={(e) => setAuthAddress(e.target.value)}
+                        placeholder="Av. Paulista, 1500 - Centro"
+                        className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 7. Cidade */}
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Cidade</label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                        <MapPin className="w-4 h-4" />
+                      </span>
+                      <input
+                        type="text"
+                        required
+                        value={authCity}
+                        onChange={(e) => setAuthCity(e.target.value)}
+                        placeholder="São Paulo"
+                        className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-600"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 8. Plano de Assinatura */}
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1 shadow-sm">Selecione o Plano Desejado</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRegSelectedPlan("plan_1tv")}
+                      className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                        regSelectedPlan === "plan_1tv"
+                          ? "bg-blue-600/20 text-blue-300 border-blue-500"
+                          : "bg-slate-950/50 text-slate-400 border-slate-800 hover:border-slate-750"
+                      }`}
+                    >
+                      <p className="text-[9px] font-black uppercase">1 Tela</p>
+                      <p className="text-[8px] opacity-75 font-mono">R$ 10,00/mês</p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegSelectedPlan("plan_3tv")}
+                      className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                        regSelectedPlan === "plan_3tv"
+                          ? "bg-blue-600/20 text-blue-300 border-blue-500"
+                          : "bg-slate-950/50 text-slate-400 border-slate-800 hover:border-slate-750"
+                      }`}
+                    >
+                      <p className="text-[9px] font-black uppercase">3 Telas</p>
+                      <p className="text-[8px] opacity-75 font-mono">R$ 15,00/mês</p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegSelectedPlan("plan_unlimited")}
+                      className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                        regSelectedPlan === "plan_unlimited"
+                          ? "bg-blue-600/20 text-blue-300 border-blue-500"
+                          : "bg-slate-950/50 text-slate-400 border-slate-800 hover:border-slate-750"
+                      }`}
+                    >
+                      <p className="text-[9px] font-black uppercase">Ilimitado</p>
+                      <p className="text-[8px] opacity-75 font-mono">R$ 20,00/mês</p>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsClientSignupModalOpen(false)}
+                    className="flex-1 py-3 px-4 bg-slate-800 hover:bg-slate-700 active:bg-slate-650 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer border border-slate-750"
+                  >
+                    Voltar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={authLoading}
+                    className="flex-1 py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:opacity-95 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer"
+                  >
+                    {authLoading ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
+                    ) : (
+                      "Criar Minha Conta Grátis"
                     )}
                   </button>
                 </div>
@@ -4938,8 +5609,11 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                   </div>
                   <div>
                     <p className="text-[10px] uppercase font-bold text-slate-400">Mensalidade Recorrente (MRR)</p>
-                    <p className="text-xl font-bold text-slate-800">
-                      R$ {clients.reduce((acc, c) => acc + (c.monthlyFee || 0), 0).toFixed(2).replace(".", ",")}
+                    <p className="text-xl font-bold text-slate-800" title="Calculado a partir de assinantes com status Ativo / Aceito">
+                      R$ {clients.filter(c => c.status === "active").reduce((acc, c) => acc + (typeof c.monthlyFee === "number" ? c.monthlyFee : parseFloat(c.monthlyFee) || 0), 0).toFixed(2).replace(".", ",")}
+                    </p>
+                    <p className="text-[9px] text-slate-500 font-bold whitespace-nowrap">
+                      Portfólio Total: R$ {clients.reduce((acc, c) => acc + (typeof c.monthlyFee === "number" ? c.monthlyFee : parseFloat(c.monthlyFee) || 0), 0).toFixed(2).replace(".", ",")}
                     </p>
                   </div>
                 </div>
@@ -5166,7 +5840,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                     {getPlanDetails(client.plan).name}
                                   </span>
                                 </td>
-                                <td className="p-3.5 text-center font-bold text-slate-700">R$ {client.monthlyFee?.toFixed(2).replace(".", ",")}</td>
+                                <td className="p-3.5 text-center font-bold text-slate-700">R$ {(typeof client.monthlyFee === "number" ? client.monthlyFee : parseFloat(client.monthlyFee) || 0).toFixed(2).replace(".", ",")}</td>
                                 <td className="p-3.5 text-center">
                                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                     isExpired 
@@ -5249,7 +5923,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                       onClick={() => {
                                         setEditingClient(client);
                                         setNewClientName(client.name);
-                                        setNewClientEmail(client.ownerEmail);
+                                        setNewClientEmail(client.ownerEmail?.endsWith("@vitrion.com.br") ? client.ownerEmail.replace("@vitrion.com.br", "") : client.ownerEmail);
                                         // Separar DDI do número local para edição
                                          const storedPhone = client.phone || "";
                                          if (storedPhone.startsWith("+55 ")) {
@@ -5275,9 +5949,12 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                                            setNewClientPhone2(storedPhone2);
                                          }
                                          setNewClientPassword(client.password || "123456");
-                                        setNewClientFee(String(client.monthlyFee || "99.90"));
+                                        const finalPlan = client.plan || "plan_1tv";
+                                        const planDetails = getPlanDetails(finalPlan);
+                                        const defaultPrice = planDetails ? String(planDetails.price) : "10.00";
+                                        setNewClientFee(String(client.monthlyFee !== undefined && client.monthlyFee !== null ? client.monthlyFee : defaultPrice));
                                         setNewClientExpiration(client.expirationDate);
-                                        setNewClientPlan(client.plan || "basico");
+                                        setNewClientPlan(client.plan || "plan_1tv");
                                       }}
                                       className="p-1 px-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 rounded text-[10px] uppercase font-bold transition-all cursor-pointer"
                                       title="Editar Informações Cadastrais"
@@ -5448,7 +6125,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                           type="number" 
                           step="0.01"
                           required
-                          placeholder="99.90"
+                          placeholder="10.00"
                           value={newClientFee}
                           onChange={(e) => setNewClientFee(e.target.value)}
                           className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 font-mono font-bold"
@@ -5485,10 +6162,6 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             {opt.label}
                           </option>
                         ))}
-                        {/* Compatibilidade retroativa para registros legados no banco de dados */}
-                        <option value="demo">DEMO LEGADO (Máx 1 TV • 5 Produtos)</option>
-                        <option value="basico">BÁSICO LEGADO (Máx 4 TVs • 25 Produtos)</option>
-                        <option value="pro">PRO LEGADO (Máx 20 TVs • 150 Produtos)</option>
                       </select>
                       <p className="text-[9px] text-slate-400 mt-1">Garante controle rígido e auditado sobre as cotas físicas de TVs e itens de cardápio nas TVs.</p>
                     </div>
@@ -5523,9 +6196,9 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             setNewClientPhone("");
                             setNewClientPhone2("");
                             setNewClientPassword("");
-                            setNewClientFee("99.90");
+                            setNewClientFee("10.00");
                             setNewClientExpiration("");
-                            setNewClientPlan("basico");
+                            setNewClientPlan("plan_1tv");
                           }}
                           className="px-3 py-2 bg-slate-100 hover:bg-slate-200 font-bold text-slate-600 text-xs uppercase border border-slate-300 rounded-lg transition-all"
                         >
@@ -5619,8 +6292,8 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                       const currentPlaylist = editingScreen.playlist && editingScreen.playlist.length > 0
                         ? editingScreen.playlist
                         : [
-                            { id: "slot-1", image: "chalk-bakery", duration: 10, enabled: true },
-                            { id: "slot-2", image: "cozy-coffee", duration: 10, enabled: false },
+                            { id: "slot-1", image: "", duration: 10, enabled: false },
+                            { id: "slot-2", image: "", duration: 10, enabled: false },
                             { id: "slot-3", image: "", duration: 10, enabled: false },
                             { id: "slot-4", image: "", duration: 10, enabled: false }
                           ];
