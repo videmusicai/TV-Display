@@ -123,6 +123,27 @@ export function getDirectMediaUrl(url: string | null | undefined): string {
   return directUrl;
 }
 
+export function isWebpageUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  if (trimmed.startsWith("data:")) return false;
+  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return false;
+  
+  const lowerUrl = trimmed.toLowerCase();
+  
+  // Lista de extensões comuns de arquivos estáticos de imagem/vídeo/áudio conhecidos
+  const staticFileExtensions = [
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico", ".tiff",
+    ".mp4", ".webm", ".ogg", ".mov", ".avi", ".flv", ".mkv",
+    "/uc?export=view", "raw=1"
+  ];
+  
+  const hasStaticExt = staticFileExtensions.some(ext => lowerUrl.includes(ext));
+  if (hasStaticExt) return false;
+  
+  return true;
+}
+
 // Definindo os Planos de Assinatura solicitados pelo usuário:
 // para 1 Tv valor de $10.00
 // para 3 TVs valor de $20.00
@@ -1498,6 +1519,14 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
             key={activeImageToShow}
             dangerouslySetInnerHTML={{ __html: presetTemplate.svgMarkup }}
           />
+        ) : activeImageToShow && isWebpageUrl(activeImageToShow) ? (
+          <iframe 
+            src={activeImageToShow} 
+            className="w-full h-full border-none animate-fade-in bg-white"
+            title="Sinal Digital Vitrion"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            key={activeImageToShow}
+          />
         ) : activeImageToShow ? (
           <img 
             src={getDirectMediaUrl(activeImageToShow)} 
@@ -1750,6 +1779,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
   const [authMode, setAuthMode] = useState<"login" | "signup" | "pair">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [quickAccessCode, setQuickAccessCode] = useState("");
   const [authStoreName, setAuthStoreName] = useState("");
   const [authPhone, setAuthPhone] = useState("");
   const [authPhoneCountry, setAuthPhoneCountry] = useState<"BR" | "US">("BR");
@@ -1791,8 +1821,16 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
       setAuthLoading(false);
       return;
     }
-    if (authPassword.length < 6) {
-      showToast("A senha deve ter no mínimo 6 caracteres.", "error");
+    const codeRegex = /^[a-zA-Z]\d{6}$/;
+    if (!codeRegex.test(authPassword.trim())) {
+      showToast("O código de acesso rápido deve conter exatamente 1 letra e 6 números (Ex: A123456).", "error");
+      setAuthLoading(false);
+      return;
+    }
+
+    const isCodeTaken = clients.some(c => c.password?.toUpperCase() === authPassword.trim().toUpperCase());
+    if (isCodeTaken) {
+      showToast("Este código de acesso já está em uso por outroestabelecimento. Por favor, crie um código diferente.", "error");
       setAuthLoading(false);
       return;
     }
@@ -2262,6 +2300,23 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     }
     setAuthError("");
     setAuthLoading(true);
+
+    // Verificar se o cliente tem conta registrada ou é administrador
+    const isRegistered = clients.some(c => 
+      c.ownerEmail?.toLowerCase() === formattedEmail || 
+      c.contactEmail?.toLowerCase() === formattedEmail
+    );
+    const isAdmin = formattedEmail === "videmusicai@gmail.com" || 
+                    formattedEmail === "admin@vitrion.com.br" || 
+                    formattedEmail === "vitrion54@vitrion.com.br" || 
+                    formattedEmail === "admin";
+
+    if (!isRegistered && !isAdmin) {
+      showToast("O acesso rápido é permitido somente para clientes já registrados.", "error");
+      setAuthLoading(false);
+      return;
+    }
+
     try {
       // Cria um UID estável e determinístico a partir do e-mail digitado, evitando perda de dados
       const safeEmailPrefix = formattedEmail.replace(/[^a-zA-Z0-9]/g, "_");
@@ -2291,241 +2346,56 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
     setAuthError("");
     setAuthLoading(true);
 
-    let formattedEmail = authEmail.trim();
-    if (!formattedEmail.includes("@")) {
-      formattedEmail = `${formattedEmail.toLowerCase()}@vitrion.com.br`;
+    const trimmedCode = quickAccessCode.trim();
+    const codeRegex = /^[a-zA-Z]\d{6}$/;
+    if (!codeRegex.test(trimmedCode)) {
+      showToast("Código inválido. Digite 1 letra seguida de 6 números (Ex: A123456).", "error");
+      setAuthLoading(false);
+      return;
     }
 
-    const formattedEmailLower = formattedEmail.toLowerCase();
-    
-    // Admin access via vitrion54 / vitron!@ as requested (also accepts vitrion!@ for safety & typo-proofing)
-    const isAdminVitrion54 = (formattedEmailLower === "vitrion54@vitrion.com.br" || formattedEmailLower === "vitrion54") && (authPassword === "vitron!@" || authPassword === "vitrion!@");
-    
-    const isAdminBypass = isAdminVitrion54 || (formattedEmailLower === "admin@vitrion.com.br" || formattedEmailLower === "videmusicai@gmail.com" || formattedEmailLower === "admin") && (authPassword === "admin123" || authPassword === "vitrion!@");
-
     try {
-      if (authMode === "login") {
-        if (isAdminBypass) {
-          const finalAdminEmail = (formattedEmailLower === "admin" || formattedEmailLower === "admin@vitrion.com.br") 
-            ? "admin@vitrion.com.br" 
-            : (formattedEmailLower === "vitrion54" || formattedEmailLower === "vitrion54@vitrion.com.br") 
-              ? "vitrion54@vitrion.com.br" 
-              : formattedEmailLower;
-          try {
-            let cred;
-            try {
-              cred = await signInWithEmailAndPassword(auth, finalAdminEmail, authPassword);
-            } catch (err: any) {
-              if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
-                try {
-                  cred = await createUserWithEmailAndPassword(auth, finalAdminEmail, authPassword);
-                } catch (createErr) {
-                  console.warn("Erro ao registrar admin no Firebase Auth, usando bypass", createErr);
-                }
-              } else {
-                throw err;
-              }
-            }
-            const adminUserObj = {
-              uid: cred?.user?.uid || "admin_super_uid",
-              email: finalAdminEmail,
-              isAnonymous: false,
-              emailVerified: true,
-              isAdminSession: true
-            };
-            localStorage.setItem("vitrion_is_admin_session", "true");
-            localStorage.setItem("vitrion_bypass_user", JSON.stringify(adminUserObj));
-            setUser(adminUserObj);
-            showToast("Painel do Super Administrador do Vitrion acessado com sucesso!", "success");
-            setAuthLoading(false);
-            return;
-          } catch (bypassErr) {
-            console.warn("Bypass ativado para admin local", bypassErr);
-            const adminUserObjBypass = {
-              uid: "admin_super_uid",
-              email: finalAdminEmail,
-              isAnonymous: false,
-              emailVerified: true,
-              isAdminSession: true
-            };
-            localStorage.setItem("vitrion_is_admin_session", "true");
-            localStorage.setItem("vitrion_bypass_user", JSON.stringify(adminUserObjBypass));
-            setUser(adminUserObjBypass);
-            showToast("Painel do Super Administrador acessado (Bypass Local)!", "success");
-            setAuthLoading(false);
-            return;
-          }
-        }
+      const matchedClient = clients.find(
+        (c) => c.password?.toUpperCase() === trimmedCode.toUpperCase()
+      );
 
-        // Sign in with Firebase Auth standard flow
-        let cred;
-        try {
-          cred = await signInWithEmailAndPassword(auth, formattedEmail, authPassword);
-        } catch (err: any) {
-          if (err.code === "auth/operation-not-allowed" || err.message?.includes("operation-not-allowed")) {
-            console.warn("Bypass ativo para auth/operation-not-allowed", err);
-            
-            // Provedor desativado no Firebase console. Usamos login persistente por bypass de e-mail.
-            const sanitizedEmail = formattedEmailLower.replace(/[^a-zA-Z0-9]/g, "_");
-            const mockUid = `bypass_${sanitizedEmail}`;
-            const mockUser = {
-              uid: mockUid,
-              email: formattedEmail,
-              isAnonymous: false,
-              emailVerified: true
-            };
-            
-            localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
-            cred = { user: mockUser };
-            
-            // Garantir que o cliente e sua tela existam no Firestore para que possam interagir
-            const cliId = `client_${mockUid}`;
-            const expiry = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 dia
-            const defaultStoreName = `Loja ${authEmail.trim().split("@")[0]}`;
-            
-            try {
-              await setDoc(doc(db, "clients", cliId), {
-                id: cliId,
-                name: defaultStoreName,
-                ownerEmail: formattedEmail,
-                phone: "(11) 99999-5454",
-                contactPhone: "(11) 99999-5454",
-                monthlyFee: 10.00,
-                expirationDate: expiry,
-                status: "active",
-                plan: "plan_1tv",
-                isFreeTrial: true,
-                createdAt: new Date().toISOString()
-              }, { merge: true });
-            } catch (dbErr) {
-              console.warn("Falha silenciosa ao guardar dados persistentes de bypass no Firestore", dbErr);
-            }
-            
-            showToast("⚠️ Firebase Auth: Provedor de E-mail/Senha de teste desativado. Login bypass persistente ativado com sucesso!", "info");
-          } else {
-            // Primeiro, verifica se o cliente foi previamente cadastrado pelo Super Admin na lista de clientes!
-            const matchedClient = clients.find(c => c.ownerEmail?.toLowerCase() === formattedEmailLower);
-            if (matchedClient) {
-              const expectedPassword = matchedClient.password || "123456";
-              if (authPassword === expectedPassword) {
-                console.log("Cliente pré-cadastrado localizado. Habilitando sessão bypass local sem erro de Firebase.");
-                const mockUser = {
-                  uid: matchedClient.id.replace("client_", ""),
-                  email: formattedEmail,
-                  isAnonymous: false,
-                  emailVerified: true
-                };
-                localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
-                cred = { user: mockUser };
-              } else {
-                throw new Error("wrong_password_or_user");
-              }
-            } else {
-              // Se o cliente não estiver cadastrado no projeto, evitamos qualquer erro de autenticação do Firebase.
-              // Cadastramos ele automaticamente com um plano inicial e damos acesso imediato ao painel!
-              console.log("Cliente não cadastrado no projeto. Realizando registro automático on-the-fly para evitar erro.");
-              try {
-                try {
-                  cred = await createUserWithEmailAndPassword(auth, formattedEmail, authPassword);
-                } catch (signUpAuthErr) {
-                  console.warn("Falha de Firebase Auth na criação rápida, simulando usuário local via bypass", signUpAuthErr);
-                  const mockUid = `usr_${Date.now()}`;
-                  cred = {
-                    user: {
-                      uid: mockUid,
-                      email: formattedEmail,
-                      isAnonymous: false,
-                      emailVerified: true
-                    }
-                  };
-                  localStorage.setItem("vitrion_bypass_user", JSON.stringify(cred.user));
-                }
-
-                if (cred.user) {
-                  const cliId = `client_${cred.user.uid}`;
-                  const expiry = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 1 dia de testes grátis
-                  const defaultStoreName = `Loja ${authEmail.trim().split("@")[0]}`;
-                  
-                  await setDoc(doc(db, "clients", cliId), {
-                    id: cliId,
-                    name: defaultStoreName,
-                    ownerEmail: formattedEmail,
-                    phone: "(11) 99999-5454",
-                    contactPhone: "(11) 99999-5454",
-                    monthlyFee: 10.00,
-                    expirationDate: expiry,
-                    status: "active",
-                    plan: "plan_1tv",
-                    isFreeTrial: true,
-                    password: authPassword,
-                    createdAt: new Date().toISOString()
-                  });
-                }
-              } catch (signUpErr: any) {
-                if (signUpErr.code === "auth/email-already-in-use") {
-                  throw new Error("wrong_password_or_user");
-                } else {
-                  throw signUpErr;
-                }
-              }
-            }
-          }
-        }
-
-        if (cred && cred.user) {
-          if (cred.user.email) {
-            localStorage.setItem("vitrion_last_email", cred.user.email.toLowerCase());
-          }
-          localStorage.removeItem("vitrion_is_admin_session");
-          setUser(cred.user);
-          showToast(`Painel Vitrion acessado com sucesso!`, "success");
-        }
-      } else {
-        // Sign up and create new customer account (auth only)
-        let cred;
-        try {
-          cred = await createUserWithEmailAndPassword(auth, formattedEmail, authPassword);
-        } catch (signUpAuthErr: any) {
-          console.warn("Não foi possível criar login no Firebase Auth. Ativando bypass de registro de conta.", signUpAuthErr);
-          
-          // Fallback para login offline / bypass local consistente
-          const sanitizedEmail = formattedEmailLower.replace(/[^a-zA-Z0-9]/g, "_");
-          const mockUid = `bypass_${sanitizedEmail}`;
-          const mockUser = {
-            uid: mockUid,
-            email: formattedEmail,
-            isAnonymous: false,
-            emailVerified: true
-          };
-          localStorage.removeItem("vitrion_is_admin_session");
-          localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
-          cred = { user: mockUser };
-          
-          if (signUpAuthErr.code === "auth/operation-not-allowed" || signUpAuthErr.message?.includes("operation-not-allowed")) {
-            showToast("⚠️ Firebase Auth: Provedor de E-mail/Senha de teste desativado. Registro bypass persistente ativado com sucesso!", "info");
-          }
-        }
-
-        if (cred && cred.user) {
-          setUser(cred.user);
-          showToast(`Conta criada com sucesso! Insira agora os dados do seu estabelecimento.`, "success");
-        }
+      if (!matchedClient) {
+        showToast("O acesso rápido é permitido somente para clientes já registrados. Código não localizado.", "error");
+        setAuthLoading(false);
+        return;
       }
+
+      // Verificar se o cliente está suspenso ou com pendências graves de acesso
+      if (matchedClient.status === "suspended") {
+        showToast("Seu acesso comercial foi suspenso pelo administrador do Vitrion.", "error");
+        setAuthLoading(false);
+        return;
+      }
+
+      const mockUser = {
+        uid: matchedClient.id.replace("client_", ""),
+        email: matchedClient.ownerEmail || `${trimmedCode.toLowerCase()}@vitrion.com.br`,
+        isAnonymous: false,
+        emailVerified: true
+      };
+
+      try {
+        await signInWithEmailAndPassword(auth, mockUser.email, matchedClient.password).catch(() => {
+          console.warn("Firebase Auth standard login fallback triggered dynamically.");
+        });
+      } catch (authErr) {
+        // Ignora erros de login direto do auth para prosseguir com bypass local integrado
+      }
+
+      localStorage.removeItem("vitrion_is_admin_session");
+      localStorage.setItem("vitrion_bypass_user", JSON.stringify(mockUser));
+      localStorage.setItem("vitrion_last_email", mockUser.email);
+      setUser(mockUser);
+      showToast(`Bem-vindo de volta, ${matchedClient.name}!`, "success");
+      setQuickAccessCode("");
     } catch (err: any) {
       console.error("Auth error", err);
-      let BrazilianErrorMessage = "Ocorreu um erro ao processar. Verifique suas credenciais.";
-      if (err.message === "wrong_password_or_user" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found" || err.code === "auth/invalid-credential") {
-        BrazilianErrorMessage = "Usuário/E-mail ou senha incorretos.";
-      } else if (err.code === "auth/email-already-in-use") {
-        BrazilianErrorMessage = "Este e-mail ou usuário já está sendo utilizado por outra conta.";
-      } else if (err.code === "auth/invalid-email") {
-        BrazilianErrorMessage = "Formato de e-mail ou usuário inválido.";
-      } else if (err.code === "auth/weak-password") {
-        BrazilianErrorMessage = "A senha deve ter no mínimo 6 caracteres.";
-      } else if (err.code === "auth/operation-not-allowed" || err.message?.includes("operation-not-allowed")) {
-        BrazilianErrorMessage = "O provedor de autenticação 'E-mail/Senha' está desativado nas configurações do Firebase console deste projeto. Habilitamos o login local bypass persistente para você testar sem interrupções, mas lembre-se de ativar 'Email/Password' no menu Authentication (Sign-in method) do Firebase.";
-      }
-      setAuthError(BrazilianErrorMessage);
+      showToast("Ocorreu um erro ao processar o acesso rápido.", "error");
     } finally {
       setAuthLoading(false);
     }
@@ -3785,6 +3655,23 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                             return;
                           }
                           setAuthLoading(true);
+
+                          // Verificar se o cliente tem conta registrada ou é administrador
+                          const isRegistered = clients.some(c => 
+                            c.ownerEmail?.toLowerCase() === formattedEmail || 
+                            c.contactEmail?.toLowerCase() === formattedEmail
+                          );
+                          const isAdmin = formattedEmail === "videmusicai@gmail.com" || 
+                                          formattedEmail === "admin@vitrion.com.br" || 
+                                          formattedEmail === "vitrion54@vitrion.com.br" || 
+                                          formattedEmail === "admin";
+
+                          if (!isRegistered && !isAdmin) {
+                            showToast("O acesso rápido é permitido somente para clientes já registrados.", "error");
+                            setAuthLoading(false);
+                            return;
+                          }
+
                           try {
                             const safeEmailPrefix = formattedEmail.replace(/[^a-zA-Z0-9]/g, "_");
                             const mockUid = `usr_${safeEmailPrefix}`;
@@ -3815,105 +3702,51 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
               <form onSubmit={handleAuthSubmit} className="space-y-3.5">
                 <div>
-                  <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1.5">
-                    Nome de Usuário ou E-mail
-                  </label>
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
-                      <User className="w-4 h-4" />
-                    </span>
-                    <input
-                      type="text"
-                      required
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      placeholder="Ex: padariacolonial ou seu-email@gmail.com"
-                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700"
-                    />
-                  </div>
-                </div>
-
-                <div>
                   <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1.5 flex justify-between items-center">
-                    <span>Senha Secreta</span>
-                    {authMode === "login" && (
-                      <button 
-                        type="button"
-                        className="text-[9px] text-blue-400 hover:underline cursor-pointer lowercase" 
-                        onClick={() => showToast("Se você esquecer o seu login de testes, digite um usuário novo para registrar na hora!", "info")}
-                      >
-                        Esqueceu a senha?
-                      </button>
-                    )}
+                    <span>Código de Acesso Rápido</span>
+                    <span className="text-[8px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full font-extrabold uppercase animate-pulse">Clientes Registrados</span>
                   </label>
                   <div className="relative">
                     <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
                       <Lock className="w-4 h-4" />
                     </span>
                     <input
-                      type="password"
+                      type="text"
                       required
-                      minLength={6}
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      placeholder="Mínimo de 6 caracteres"
-                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700"
+                      maxLength={7}
+                      value={quickAccessCode}
+                      onChange={(e) => setQuickAccessCode(e.target.value.replace(/\s/g, ""))}
+                      placeholder="Ex: A123456 (1 letra e 6 números)"
+                      className="w-full bg-slate-950 border border-slate-800/80 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700 uppercase"
                     />
                   </div>
                 </div>
 
-                {authMode === "signup" ? (
-                  <button
-                    type="submit"
-                    disabled={authLoading}
-                    className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:opacity-90 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-4 cursor-pointer font-semibold"
-                  >
-                    {authLoading ? (
-                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      <span>Criar Minha Conta Grátis</span>
-                    )}
-                  </button>
-                ) : (
-                  <button
-                    type="submit"
-                    disabled={authLoading}
-                    className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:opacity-90 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-4 cursor-pointer font-semibold"
-                  >
-                    {authLoading ? (
-                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      <>
-                        <UserCheck className="w-4.5 h-4.5 shrink-0" />
-                        <span>Acessar Plataforma</span>
-                      </>
-                    )}
-                  </button>
-                )}
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:opacity-90 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-4 cursor-pointer font-semibold"
+                >
+                  {authLoading ? (
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <UserCheck className="w-4.5 h-4.5 shrink-0" />
+                      <span>Acessar Plataforma</span>
+                    </>
+                  )}
+                </button>
 
                 <div className="text-center pt-2">
-                  {authMode === "login" ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsClientSignupModalOpen(true);
-                      }}
-                      className="text-[10px] text-slate-400 hover:text-white transition-all font-bold"
-                    >
-                      Não tem uma conta comercial? <span className="text-blue-400 hover:underline">Cadastre-se gratuitamente</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode("login");
-                        setAuthError("");
-                      }}
-                      className="text-[10px] text-slate-400 hover:text-white transition-all font-bold"
-                    >
-                      Já possui uma conta ativa? <span className="text-blue-400 hover:underline">Fazer login</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsClientSignupModalOpen(true);
+                    }}
+                    className="text-[10px] text-slate-400 hover:text-white transition-all font-bold"
+                  >
+                    Não tem uma conta comercial? <span className="text-blue-400 hover:underline">Cadastre-se gratuitamente</span>
+                  </button>
                 </div>
               </form>
 
@@ -4094,19 +3927,19 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
 
                   {/* 3. Senha Secreta */}
                   <div>
-                    <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Senha Secreta</label>
+                    <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider mb-1">Código de Acesso Rápido</label>
                     <div className="relative">
                       <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
                         <Lock className="w-4 h-4" />
                       </span>
                       <input
-                        type="password"
+                        type="text"
                         required
-                        minLength={6}
+                        maxLength={7}
                         value={authPassword}
-                        onChange={(e) => setAuthPassword(e.target.value)}
-                        placeholder="Mínimo 6 caracteres"
-                        className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700"
+                        onChange={(e) => setAuthPassword(e.target.value.replace(/\s/g, ""))}
+                        placeholder="Ex: A123456 (1 letra e 6 números)"
+                        className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg pl-9 pr-3 py-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-semibold placeholder-slate-700 uppercase"
                       />
                     </div>
                   </div>
@@ -4779,6 +4612,13 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                               <video src={getDirectMediaUrl(sc.currentVideo)} muted className="w-full h-full object-cover" />
                             ) : presetImg ? (
                               <div className="w-full h-full scale-[0.6] opacity-90 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: presetImg.svgMarkup }} />
+                            ) : activeImage && isWebpageUrl(activeImage) ? (
+                              <iframe 
+                                src={activeImage} 
+                                className="w-full h-full border-none pointer-events-none opacity-90 bg-white" 
+                                title="Live Preview" 
+                                sandbox="allow-scripts allow-same-origin"
+                              />
                             ) : isCustomUploaded ? (
                               <img src={getDirectMediaUrl(activeImage)} alt="Preview custom" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
@@ -6331,12 +6171,21 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     {/* Preview se existir imagem ativa e sem video */}
                     {editingScreen.currentImage && !editingScreen.currentVideo && (
                       <div className="relative w-full h-24 bg-slate-100 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
-                        <img 
-                          src={getDirectMediaUrl(editingScreen.currentImage)} 
-                          alt="Visualização da imagem" 
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
+                        {isWebpageUrl(editingScreen.currentImage) ? (
+                          <iframe 
+                            src={editingScreen.currentImage} 
+                            className="w-full h-full border-none pointer-events-none bg-white" 
+                            title="Webpage preview"
+                            sandbox="allow-scripts allow-same-origin"
+                          />
+                        ) : (
+                          <img 
+                            src={getDirectMediaUrl(editingScreen.currentImage)} 
+                            alt="Visualização da imagem" 
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        )}
                         <button
                           type="button"
                           onClick={() => setEditingScreen({ ...editingScreen, currentImage: "" })}
@@ -6699,7 +6548,16 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                           <div className="shrink-0 flex items-center gap-1.5">
                             {slotItem.image && (
                               <div className="w-6 h-6 rounded border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center">
-                                <img src={getDirectMediaUrl(slotItem.image)} alt="slot micro preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                {isWebpageUrl(slotItem.image) ? (
+                                  <iframe 
+                                    src={slotItem.image} 
+                                    className="w-full h-full border-none pointer-events-none bg-white" 
+                                    title="slot webpage preview"
+                                    sandbox="allow-scripts allow-same-origin"
+                                  />
+                                ) : (
+                                  <img src={getDirectMediaUrl(slotItem.image)} alt="slot micro preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                )}
                               </div>
                             )}
                             <input 
