@@ -103,6 +103,22 @@ export function getDirectMediaUrl(url: string | null | undefined): string {
     }
   }
 
+  // 3. Cloudinary optimization (Automatic Format & Quality)
+  if (directUrl.includes("cloudinary.com")) {
+    // Para imagens: adiciona f_auto,q_auto se ainda não estiver presente para otimizar desempenho nas TVs
+    if (directUrl.includes("/image/upload/")) {
+      if (!directUrl.includes("f_auto") && !directUrl.includes("q_auto")) {
+        directUrl = directUrl.replace("/image/upload/", "/image/upload/f_auto,q_auto/");
+      }
+    }
+    // Para vídeos: adiciona f_auto,q_auto para otimização de codecs e economia de banda nas TVs
+    if (directUrl.includes("/video/upload/")) {
+      if (!directUrl.includes("f_auto") && !directUrl.includes("q_auto")) {
+        directUrl = directUrl.replace("/video/upload/", "/video/upload/f_auto,q_auto/");
+      }
+    }
+  }
+
   return directUrl;
 }
 
@@ -3201,18 +3217,29 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
               </div>
 
                {authError && (
-                <div className="p-4 rounded-xl bg-gradient-to-br from-red-500/10 to-transparent border border-red-500/30 text-slate-300 text-xs leading-relaxed space-y-3 font-sans animate-fade-in shadow-xl">
+                <div className="p-4 rounded-xl bg-gradient-to-br from-red-500/15 to-red-500/5 border border-red-500/30 text-slate-300 text-xs leading-relaxed space-y-3 font-sans animate-fade-in shadow-xl">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
                     <p className="font-extrabold text-red-400 uppercase tracking-wider text-[11px]">
-                      Restrição de Ambiente (Google Auth Pop-up)
+                      Ajuste Necessário no Console do Firebase
                     </p>
                   </div>
-                  <p className="text-[11px] text-slate-300">
-                    O login por pop-up do Google é bloqueado dentro do iframe de desenvolvimento (Sandbox) do AI Studio porque este endereço dinâmico de testes não está cadastrado no console do seu Firebase.
-                  </p>
+                  
+                  <div className="space-y-1.5 text-[11px] text-slate-300">
+                    <p>
+                      Para que o login com o Google funcione em <strong>vitrion.vercel.app</strong> ou no ambiente de testes, você precisa autorizar os domínios no console do Firebase:
+                    </p>
+                    
+                    <ol className="list-decimal list-inside space-y-1 text-[10.5px] bg-slate-950/40 p-2.5 rounded-lg border border-slate-800">
+                      <li>Acesse o <strong><a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Console do Firebase</a></strong>.</li>
+                      <li>Vá em <strong>Build &gt; Authentication &gt; Settings &gt; Authorized domains</strong>.</li>
+                      <li>Adicione o domínio de produção: <code className="bg-slate-900 px-1 py-0.5 rounded text-blue-300 font-mono select-all">vitrion.vercel.app</code></li>
+                      <li>Adicione o domínio de testes: <code className="bg-slate-900 px-1 py-0.5 rounded text-blue-300 font-mono select-all">run.app</code> (ou a URL completa da aba atual).</li>
+                    </ol>
+                  </div>
+
                   <p className="text-[10px] text-red-300/80 font-mono bg-slate-950/60 p-2 rounded border border-red-500/10 break-all leading-normal">
-                    <strong>Erro Técnico:</strong> {authError}
+                    <strong>Detalhe Técnico:</strong> {authError}
                   </p>
                   
                   {/* Formulário de Acesso Imediato Integrado para resolver o problema na hora */}
@@ -5570,7 +5597,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                       <div className="relative">
                         <input 
                           type="url"
-                          placeholder="Cole o link da sua imagem JPG/PNG (Dropbox, Drive, Nuvem...)"
+                          placeholder="Cole o link da sua imagem JPG/PNG (Cloudinary, Dropbox, Drive, Nuvem...)"
                           value={editingScreen.currentImage && !editingScreen.currentImage.startsWith("data:") ? editingScreen.currentImage : ""}
                           onChange={(e) => {
                             const val = e.target.value.trim();
@@ -5584,7 +5611,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                         />
                       </div>
                       <p className="text-[9px] text-slate-400 leading-relaxed font-semibold">
-                        Sem limites de tamanho! Carregue a imagem na nuvem de sua preferência e cole o link direto aqui.
+                        Sem limites de tamanho! Suporte total e otimização automática para links do <strong className="text-blue-500">Cloudinary</strong>, Dropbox e Google Drive.
                       </p>
                     </div>
 
@@ -5748,7 +5775,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                       <div className="relative">
                         <input 
                           type="url"
-                          placeholder="Cole o link do seu vídeo em MP4 (Dropbox, Drive, Nuvem...)"
+                          placeholder="Cole o link do seu vídeo em MP4 (Cloudinary, Dropbox, Drive, Nuvem...)"
                           value={editingScreen.currentVideo && !editingScreen.currentVideo.startsWith("data:") ? editingScreen.currentVideo : ""}
                           onChange={(e) => {
                             const val = e.target.value.trim();
@@ -5762,7 +5789,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                         />
                       </div>
                       <p className="text-[9px] text-slate-400 leading-relaxed font-semibold">
-                        Sem limites de tamanho! Carregue o vídeo no Google Drive, Dropbox ou servidor próprio e cole o link direto aqui.
+                        Sem limites de tamanho! Suporte total e otimização de codecs automática para vídeos do <strong className="text-blue-500">Cloudinary</strong>, Dropbox e Google Drive.
                       </p>
                     </div>
 
