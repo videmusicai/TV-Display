@@ -123,27 +123,6 @@ export function getDirectMediaUrl(url: string | null | undefined): string {
   return directUrl;
 }
 
-export function isWebpageUrl(url: string | null | undefined): boolean {
-  if (!url) return false;
-  const trimmed = url.trim();
-  if (trimmed.startsWith("data:")) return false;
-  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return false;
-  
-  const lowerUrl = trimmed.toLowerCase();
-  
-  // Lista de extensões comuns de arquivos estáticos de imagem/vídeo/áudio conhecidos
-  const staticFileExtensions = [
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico", ".tiff",
-    ".mp4", ".webm", ".ogg", ".mov", ".avi", ".flv", ".mkv",
-    "/uc?export=view", "raw=1"
-  ];
-  
-  const hasStaticExt = staticFileExtensions.some(ext => lowerUrl.includes(ext));
-  if (hasStaticExt) return false;
-  
-  return true;
-}
-
 // Definindo os Planos de Assinatura solicitados pelo usuário:
 // para 1 Tv valor de $10.00
 // para 3 TVs valor de $20.00
@@ -1518,14 +1497,6 @@ function PublicDisplayView({ screenId }: { screenId: string }) {
             className="w-full h-full animate-fade-in"
             key={activeImageToShow}
             dangerouslySetInnerHTML={{ __html: presetTemplate.svgMarkup }}
-          />
-        ) : activeImageToShow && isWebpageUrl(activeImageToShow) ? (
-          <iframe 
-            src={activeImageToShow} 
-            className="w-full h-full border-none animate-fade-in bg-white"
-            title="Sinal Digital Vitrion"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-            key={activeImageToShow}
           />
         ) : activeImageToShow ? (
           <img 
@@ -4612,13 +4583,6 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                               <video src={getDirectMediaUrl(sc.currentVideo)} muted className="w-full h-full object-cover" />
                             ) : presetImg ? (
                               <div className="w-full h-full scale-[0.6] opacity-90 select-none pointer-events-none" dangerouslySetInnerHTML={{ __html: presetImg.svgMarkup }} />
-                            ) : activeImage && isWebpageUrl(activeImage) ? (
-                              <iframe 
-                                src={activeImage} 
-                                className="w-full h-full border-none pointer-events-none opacity-90 bg-white" 
-                                title="Live Preview" 
-                                sandbox="allow-scripts allow-same-origin"
-                              />
                             ) : isCustomUploaded ? (
                               <img src={getDirectMediaUrl(activeImage)} alt="Preview custom" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
@@ -6171,21 +6135,12 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                     {/* Preview se existir imagem ativa e sem video */}
                     {editingScreen.currentImage && !editingScreen.currentVideo && (
                       <div className="relative w-full h-24 bg-slate-100 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
-                        {isWebpageUrl(editingScreen.currentImage) ? (
-                          <iframe 
-                            src={editingScreen.currentImage} 
-                            className="w-full h-full border-none pointer-events-none bg-white" 
-                            title="Webpage preview"
-                            sandbox="allow-scripts allow-same-origin"
-                          />
-                        ) : (
-                          <img 
-                            src={getDirectMediaUrl(editingScreen.currentImage)} 
-                            alt="Visualização da imagem" 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        )}
+                        <img 
+                          src={getDirectMediaUrl(editingScreen.currentImage)} 
+                          alt="Visualização da imagem" 
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
                         <button
                           type="button"
                           onClick={() => setEditingScreen({ ...editingScreen, currentImage: "" })}
@@ -6548,16 +6503,7 @@ function AdminDashboardView({ setScreenParam }: { setScreenParam: (id: string) =
                           <div className="shrink-0 flex items-center gap-1.5">
                             {slotItem.image && (
                               <div className="w-6 h-6 rounded border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center">
-                                {isWebpageUrl(slotItem.image) ? (
-                                  <iframe 
-                                    src={slotItem.image} 
-                                    className="w-full h-full border-none pointer-events-none bg-white" 
-                                    title="slot webpage preview"
-                                    sandbox="allow-scripts allow-same-origin"
-                                  />
-                                ) : (
-                                  <img src={getDirectMediaUrl(slotItem.image)} alt="slot micro preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                )}
+                                <img src={getDirectMediaUrl(slotItem.image)} alt="slot micro preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                               </div>
                             )}
                             <input 
